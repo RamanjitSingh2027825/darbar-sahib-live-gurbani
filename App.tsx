@@ -10,10 +10,10 @@ const App: React.FC = () => {
       <div 
         className="fixed inset-0 z-0 opacity-20 pointer-events-none"
         style={{
-            backgroundImage: `url('https://images.unsplash.com/photo-1564101169894-2c2d1a74523f?q=80&w=2574&auto=format&fit=crop')`, // Golden Temple abstract/night shot
+            backgroundImage: `url('https://images.unsplash.com/photo-1564101169894-2c2d1a74523f?q=80&w=2574&auto=format&fit=crop')`, 
             backgroundSize: 'cover',
             backgroundPosition: 'center',
-            filter: 'blur(8px) saturate(0)' // Desaturated blur for focus
+            filter: 'blur(8px) saturate(0)' 
         }}
       />
       
@@ -42,7 +42,8 @@ const App: React.FC = () => {
 
         </main>
 
-        <footer className="py-6 text-center text-slate-600 text-xs relative z-10">
+        {/* CHANGED: py-6 -> pt-6 pb-16 to add safe area for Bottom Nav Bar */}
+        <footer className="pt-6 pb-16 text-center text-slate-600 text-xs relative z-10">
             <p>© {new Date().getFullYear()} Darbar Sahib Live Viewer. Unofficial App.</p>
             <p className="mt-1">Stream source: SGPC.net</p>
         </footer>

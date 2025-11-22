@@ -3,7 +3,8 @@ import { Music, Info } from 'lucide-react';
 
 const Header: React.FC = () => {
   return (
-    <header className="w-full py-4 px-6 bg-slate-900/50 backdrop-blur-md border-b border-slate-800 sticky top-0 z-50">
+    // CHANGED: py-4 -> pt-14 pb-4 to add safe area for Status Bar
+    <header className="w-full pt-14 pb-4 px-6 bg-slate-900/50 backdrop-blur-md border-b border-slate-800 sticky top-0 z-50">
       <div className="max-w-6xl mx-auto flex justify-between items-center">
         <div className="flex items-center gap-2">
           <div className="p-2 bg-amber-500/20 rounded-full">

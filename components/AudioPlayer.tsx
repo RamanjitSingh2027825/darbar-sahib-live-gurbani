@@ -1,11 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { 
   Play, Pause, Volume2, VolumeX, Radio, Loader2, 
-  Moon, Mic, Square, Clock, Save
+  Moon, Mic, Square, Clock
 } from 'lucide-react';
 import { STREAM_URL } from '../constants';
 import { ConnectionStatus } from '../types';
 import WaveVisualizer from './WaveVisualizer';
+
+// Capacitor Imports for Native Saving & Notifications
+import { Filesystem, Directory } from '@capacitor/filesystem';
+import { Toast } from '@capacitor/toast';
 
 const AudioPlayer: React.FC = () => {
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -118,6 +122,20 @@ const AudioPlayer: React.FC = () => {
     return () => clearTimeout(timer);
   }, [sleepTimer, isPlaying]);
 
+  // Helper: Convert Blob to Base64 for Filesystem API
+  const blobToBase64 = (blob: Blob): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64String = reader.result as string;
+        // Remove the data URL prefix (e.g., "data:audio/webm;base64,")
+        resolve(base64String.split(',')[1]); 
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  };
+
   // --- Recording Logic ---
   const startRecording = () => {
     const audio = audioRef.current;
@@ -131,11 +149,11 @@ const AudioPlayer: React.FC = () => {
         const stream = audio.captureStream ? audio.captureStream() : audio.mozCaptureStream ? audio.mozCaptureStream() : null;
         
         if (!stream) {
-            alert("Recording is not supported in this browser.");
+            alert("Recording is not supported in this environment.");
             return;
         }
 
-        const mediaRecorder = new MediaRecorder(stream);
+        const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
         mediaRecorderRef.current = mediaRecorder;
         chunksRef.current = [];
 
@@ -143,17 +161,35 @@ const AudioPlayer: React.FC = () => {
             if (e.data.size > 0) chunksRef.current.push(e.data);
         };
 
-        mediaRecorder.onstop = () => {
+        mediaRecorder.onstop = async () => {
             const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
             const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-            a.href = url;
-            a.download = `Darbar_Sahib_Recording_${timestamp}.webm`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
+            const fileName = `Darbar_Sahib_${timestamp}.webm`;
+
+            try {
+                // Convert blob to base64 to save via Capacitor Filesystem
+                const base64Data = await blobToBase64(blob);
+
+                // Save to the "Documents" folder
+                await Filesystem.writeFile({
+                    path: fileName,
+                    data: base64Data,
+                    directory: Directory.Documents
+                });
+
+                // Show Success Message
+                await Toast.show({
+                    text: `Saved to Documents: ${fileName}`,
+                    duration: 'long',
+                    position: 'bottom'
+                });
+            } catch (err) {
+                console.error("File save error:", err);
+                await Toast.show({
+                    text: `Failed to save recording.`,
+                    duration: 'short'
+                });
+            }
             
             // Reset state
             setRecordingDuration(0);
@@ -165,7 +201,7 @@ const AudioPlayer: React.FC = () => {
         setIsRecording(true);
     } catch (err) {
         console.error("Recording failed:", err);
-        alert("Could not start recording. This feature requires a secure context (HTTPS) or localhost.");
+        alert("Could not start recording.");
     }
   };
 
@@ -184,7 +220,6 @@ const AudioPlayer: React.FC = () => {
   const stopRecording = () => {
     if (mediaRecorderRef.current && isRecording) {
         mediaRecorderRef.current.stop();
-        // State reset handled in onstop event
     }
   };
 
