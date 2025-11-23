@@ -6,18 +6,20 @@ import { useTheme } from '../contexts/ThemeContext'; // IMPORT THEME
 
 interface RecordingsListProps {
   onClose: () => void;
-  onPlayRecording: (url: string) => void;
+  onPlayRecording: (fileName: string) => void; // CHANGED: url -> fileName
   currentPlayingUrl: string | null;
   isPlayerPaused: boolean;
+  onFilesChanged: () => void;
 }
 
 const RecordingsList: React.FC<RecordingsListProps> = ({ 
   onClose, 
   onPlayRecording, 
   currentPlayingUrl,
-  isPlayerPaused 
+  isPlayerPaused,
+  onFilesChanged
 }) => {
-  const { theme } = useTheme(); // USE THEME
+  const { theme } = useTheme();
   const [files, setFiles] = useState<FileInfo[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [renameText, setRenameText] = useState('');
@@ -33,7 +35,11 @@ const RecordingsList: React.FC<RecordingsListProps> = ({
 
   const handleDelete = async (fileName: string) => {
     if (!confirm(`Delete ${fileName}?`)) return;
-    try { await Filesystem.deleteFile({ path: fileName, directory: Directory.Documents }); loadRecordings(); } 
+    try { 
+      await Filesystem.deleteFile({ path: fileName, directory: Directory.Documents }); 
+      loadRecordings(); 
+      onFilesChanged();
+    } 
     catch (err) { console.error('Delete failed:', err); }
   };
 
@@ -42,15 +48,18 @@ const RecordingsList: React.FC<RecordingsListProps> = ({
   const saveRename = async (oldName: string) => {
     if (!renameText.trim()) { setEditingId(null); return; }
     const newName = `${renameText.trim()}.webm`;
-    try { await Filesystem.rename({ from: oldName, to: newName, directory: Directory.Documents }); setEditingId(null); loadRecordings(); } 
+    try { 
+      await Filesystem.rename({ from: oldName, to: newName, directory: Directory.Documents }); 
+      setEditingId(null); 
+      loadRecordings(); 
+      onFilesChanged();
+    } 
     catch (err) { console.error('Rename failed:', err); alert('Could not rename file.'); }
   };
 
-  const handlePlay = async (fileName: string) => {
-    try {
-        const uri = await Filesystem.getUri({ path: fileName, directory: Directory.Documents });
-        onPlayRecording(Capacitor.convertFileSrc(uri.uri));
-    } catch (err) { console.error('Error getting file URI:', err); }
+  // FIXED: Simply pass the filename. No need to generate URL here.
+  const handlePlay = (fileName: string) => {
+    onPlayRecording(fileName);
   };
 
   return (
