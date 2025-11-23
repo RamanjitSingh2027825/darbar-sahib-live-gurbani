@@ -1,25 +1,28 @@
 import React from 'react';
-import { Music, Info } from 'lucide-react';
+import { Music } from 'lucide-react';
+import { useTheme } from '../contexts/ThemeContext';
+import ThemeSwitcher from './ThemeSwitcher';
 
 const Header: React.FC = () => {
+  const { theme } = useTheme();
+
   return (
-    // CHANGED: py-4 -> pt-14 pb-4 to add safe area for Status Bar
-    <header className="w-full pt-14 pb-4 px-6 bg-slate-900/50 backdrop-blur-md border-b border-slate-800 sticky top-0 z-50">
+    <header className={`w-full pt-14 pb-4 px-6 backdrop-blur-md border-b sticky top-0 z-50 transition-colors duration-300 ${theme.colors.cardBg} ${theme.colors.cardBorder}`}>
       <div className="max-w-6xl mx-auto flex justify-between items-center">
+        
+        {/* Logo Area */}
         <div className="flex items-center gap-2">
-          <div className="p-2 bg-amber-500/20 rounded-full">
-            <Music className="w-5 h-5 text-amber-400" />
+          <div className={`p-2 rounded-full transition-colors ${theme.colors.iconBg}`}>
+            <Music className={`w-5 h-5 ${theme.colors.accent}`} />
           </div>
-          <h1 className="text-xl font-bold text-slate-100 tracking-tight">
-            Darbar Sahib <span className="text-amber-400 font-light">Live</span>
+          <h1 className={`text-xl font-bold tracking-tight transition-colors ${theme.colors.textMain}`}>
+            Darbar Sahib <span className={`font-light ${theme.colors.accent}`}>Live</span>
           </h1>
         </div>
-        <button 
-            className="p-2 hover:bg-slate-800 rounded-full transition-colors text-slate-400 hover:text-amber-200"
-            title="About"
-        >
-          <Info className="w-5 h-5" />
-        </button>
+
+        {/* New Animated Switcher */}
+        <ThemeSwitcher />
+
       </div>
     </header>
   );

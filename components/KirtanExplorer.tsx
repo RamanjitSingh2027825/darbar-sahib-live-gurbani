@@ -4,6 +4,7 @@ import {
   Calendar, User, Play, Search 
 } from 'lucide-react';
 import { fetchDirectory, KIRTAN_BASE, RAGIWISE_BASE, DirectoryEntry } from '../services/sgpcService';
+import { useTheme } from '../contexts/ThemeContext'; // IMPORT THEME
 
 interface KirtanExplorerProps {
   onClose: () => void;
@@ -13,31 +14,25 @@ interface KirtanExplorerProps {
 type Tab = 'years' | 'ragis';
 
 const KirtanExplorer: React.FC<KirtanExplorerProps> = ({ onClose, onPlayTrack }) => {
+  const { theme } = useTheme(); // USE THEME
   const [activeTab, setActiveTab] = useState<Tab>('years');
   const [currentPath, setCurrentPath] = useState<string>(KIRTAN_BASE);
   const [history, setHistory] = useState<string[]>([]);
   const [entries, setEntries] = useState<DirectoryEntry[]>([]);
   const [loading, setLoading] = useState(false);
-  
-  // Search State
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Initial Load
   useEffect(() => {
     loadPath(activeTab === 'years' ? KIRTAN_BASE : RAGIWISE_BASE);
     setHistory([]);
-    setSearchQuery(''); // Clear search on tab change
+    setSearchQuery('');
   }, [activeTab]);
 
-  // Clear search when navigating folders
-  useEffect(() => {
-      setSearchQuery('');
-  }, [currentPath]);
+  useEffect(() => { setSearchQuery(''); }, [currentPath]);
 
   const loadPath = async (url: string) => {
     setLoading(true);
     const data = await fetchDirectory(url);
-    // Sort: Folders first, then files
     const sorted = data.sort((a, b) => {
       if (a.is_file === b.is_file) return a.name.localeCompare(b.name);
       return a.is_file ? 1 : -1;
@@ -50,8 +45,6 @@ const KirtanExplorer: React.FC<KirtanExplorerProps> = ({ onClose, onPlayTrack })
   const handleEntryClick = (entry: DirectoryEntry) => {
     if (entry.is_file) {
       if (entry.is_mp3) {
-        // Pass the filtered list (or full list) as playlist? 
-        // Usually full list of current directory is better for "Next" button context
         const playlist = entries.filter(e => e.is_mp3);
         onPlayTrack(entry.url, entry.name, playlist);
       }
@@ -69,7 +62,6 @@ const KirtanExplorer: React.FC<KirtanExplorerProps> = ({ onClose, onPlayTrack })
     }
   };
 
-  // Filter Entries based on Search
   const filteredEntries = entries.filter(entry => {
       if (!searchQuery) return true;
       const displayName = decodeURIComponent(entry.name).replace('.mp3', '');
@@ -77,31 +69,31 @@ const KirtanExplorer: React.FC<KirtanExplorerProps> = ({ onClose, onPlayTrack })
   });
 
   return (
-    <div className="absolute inset-0 z-50 bg-slate-950 flex flex-col animate-in slide-in-from-bottom-4 duration-300">
+    <div className={`absolute inset-0 z-50 flex flex-col animate-in slide-in-from-bottom-4 duration-300 ${theme.colors.appBg}`}>
       
       {/* Header */}
-      <div className="p-4 border-b border-slate-800 bg-slate-900 flex items-center justify-between">
-        <h2 className="text-lg font-bold text-slate-100 flex items-center gap-2">
-           <Music className="w-5 h-5 text-amber-500" />
+      <div className={`p-4 border-b flex items-center justify-between ${theme.colors.cardBg} ${theme.colors.cardBorder}`}>
+        <h2 className={`text-lg font-bold flex items-center gap-2 ${theme.colors.textMain}`}>
+           <Music className={`w-5 h-5 ${theme.colors.accent}`} />
            Past Kirtan
         </h2>
-        <button onClick={onClose} className="p-2 bg-slate-800 rounded-full text-slate-400 hover:text-white">
+        <button onClick={onClose} className={`p-2 rounded-full transition-colors ${theme.colors.iconBg} ${theme.colors.textSub} ${theme.colors.hover}`}>
           <X className="w-5 h-5" />
         </button>
       </div>
 
-      {/* Navigation Tabs (Only show at root) */}
+      {/* Tabs */}
       {history.length === 0 && (
-        <div className="flex p-2 gap-2 bg-slate-900/50">
+        <div className={`flex p-2 gap-2 ${theme.colors.cardBg}`}>
           <button 
             onClick={() => setActiveTab('years')}
-            className={`flex-1 py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2 transition-colors ${activeTab === 'years' ? 'bg-amber-500 text-slate-900' : 'bg-slate-800 text-slate-400'}`}
+            className={`flex-1 py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2 transition-colors ${activeTab === 'years' ? `${theme.colors.accentBg} text-white` : `${theme.colors.iconBg} ${theme.colors.textSub}`}`}
           >
             <Calendar className="w-4 h-4" /> By Year
           </button>
           <button 
             onClick={() => setActiveTab('ragis')}
-            className={`flex-1 py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2 transition-colors ${activeTab === 'ragis' ? 'bg-amber-500 text-slate-900' : 'bg-slate-800 text-slate-400'}`}
+            className={`flex-1 py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2 transition-colors ${activeTab === 'ragis' ? `${theme.colors.accentBg} text-white` : `${theme.colors.iconBg} ${theme.colors.textSub}`}`}
           >
             <User className="w-4 h-4" /> By Ragi
           </button>
@@ -109,45 +101,42 @@ const KirtanExplorer: React.FC<KirtanExplorerProps> = ({ onClose, onPlayTrack })
       )}
 
       {/* Search Bar */}
-      <div className="px-3 py-2 bg-slate-900/30 border-b border-slate-800">
+      <div className={`px-3 py-2 border-b ${theme.colors.cardBg} ${theme.colors.cardBorder}`}>
           <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+              <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${theme.colors.textSub}`} />
               <input 
                   type="text"
-                  placeholder={`Search ${activeTab === 'ragis' && history.length === 0 ? 'Ragis' : 'tracks'}...`}
+                  placeholder={`Search...`}
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full bg-slate-800/50 border border-slate-700 text-slate-200 text-sm rounded-full py-2 pl-9 pr-4 focus:outline-none focus:border-amber-500/50 placeholder:text-slate-600"
+                  className={`w-full border rounded-full py-2 pl-9 pr-4 text-sm focus:outline-none placeholder:opacity-50 ${theme.colors.appBg} ${theme.colors.cardBorder} ${theme.colors.textMain}`}
               />
               {searchQuery && (
-                  <button 
-                    onClick={() => setSearchQuery('')}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 p-0.5 bg-slate-700 rounded-full text-slate-300"
-                  >
+                  <button onClick={() => setSearchQuery('')} className={`absolute right-3 top-1/2 -translate-y-1/2 p-0.5 rounded-full ${theme.colors.iconBg} ${theme.colors.textSub}`}>
                       <X className="w-3 h-3" />
                   </button>
               )}
           </div>
       </div>
 
-      {/* Breadcrumb / Back Navigation */}
+      {/* Back Nav */}
       {history.length > 0 && (
-         <div className="px-4 py-2 bg-slate-900/30 flex items-center gap-2 border-b border-slate-800">
-            <button onClick={handleBack} className="p-1 rounded hover:bg-slate-800 text-amber-400">
+         <div className={`px-4 py-2 flex items-center gap-2 border-b ${theme.colors.cardBg} ${theme.colors.cardBorder}`}>
+            <button onClick={handleBack} className={`p-1 rounded hover:opacity-80 ${theme.colors.accent}`}>
                 <ArrowLeft className="w-5 h-5" />
             </button>
-            <span className="text-xs text-slate-500 truncate font-mono">
+            <span className={`text-xs truncate font-mono ${theme.colors.textSub}`}>
                 .../{decodeURIComponent(currentPath.split('/').filter(Boolean).pop() || '')}
             </span>
          </div>
       )}
 
-      {/* Content List */}
+      {/* List */}
       <div className="flex-1 overflow-y-auto p-2">
         {loading ? (
-            <div className="flex flex-col items-center justify-center h-48 text-slate-500 gap-3">
-                <Loader2 className="w-8 h-8 animate-spin text-amber-500" />
-                <p className="text-xs">Fetching from SGPC...</p>
+            <div className={`flex flex-col items-center justify-center h-48 gap-3 ${theme.colors.textSub}`}>
+                <Loader2 className={`w-8 h-8 animate-spin ${theme.colors.accent}`} />
+                <p className="text-xs">Fetching...</p>
             </div>
         ) : (
             <div className="space-y-1">
@@ -155,33 +144,24 @@ const KirtanExplorer: React.FC<KirtanExplorerProps> = ({ onClose, onPlayTrack })
                     <button
                         key={idx + entry.name}
                         onClick={() => handleEntryClick(entry)}
-                        className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-slate-900 border border-transparent hover:border-slate-800 transition-all group text-left"
+                        className={`w-full flex items-center gap-3 p-3 rounded-xl border border-transparent transition-all group text-left ${theme.colors.hover}`}
                     >
-                        <div className={`p-2 rounded-full ${entry.is_file ? 'bg-indigo-500/10 text-indigo-400' : 'bg-amber-500/10 text-amber-500'}`}>
+                        <div className={`p-2 rounded-full ${entry.is_file ? `${theme.colors.iconBg} ${theme.colors.textMain}` : `${theme.colors.accent} bg-opacity-10`}`}>
                             {entry.is_file ? <Play className="w-4 h-4 fill-current" /> : <Folder className="w-4 h-4 fill-current" />}
                         </div>
                         <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium text-slate-200 truncate group-hover:text-amber-400 transition-colors">
-                                {/* Display Name Cleaned up */}
+                            <p className={`text-sm font-medium truncate transition-colors ${theme.colors.textMain} group-hover:${theme.colors.accent}`}>
                                 {decodeURIComponent(entry.name).replace('.mp3', '')}
                             </p>
-                            <p className="text-[10px] text-slate-500">
+                            <p className={`text-[10px] ${theme.colors.textSub}`}>
                                 {entry.is_file ? 'Audio File' : 'Folder'}
                             </p>
                         </div>
                     </button>
                 ))}
-                
                 {filteredEntries.length === 0 && !loading && (
-                    <div className="text-center p-8 text-slate-500 text-sm flex flex-col items-center">
-                        {searchQuery ? (
-                            <>
-                                <span className="mb-1">No results found for "{searchQuery}"</span>
-                                <button onClick={() => setSearchQuery('')} className="text-amber-500 text-xs underline">Clear Search</button>
-                            </>
-                        ) : (
-                           "Empty Directory"
-                        )}
+                    <div className={`text-center p-8 text-sm ${theme.colors.textSub}`}>
+                        {searchQuery ? "No results found" : "Empty Directory"}
                     </div>
                 )}
             </div>
