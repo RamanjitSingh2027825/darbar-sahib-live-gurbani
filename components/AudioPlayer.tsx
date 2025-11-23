@@ -11,7 +11,7 @@ import RecordingsList from './RecordingsList';
 import KirtanExplorer from './KirtanExplorer';
 import FavoritesList, { FavoriteItem } from './FavoritesList';
 import { DirectoryEntry } from '../services/sgpcService';
-import { useTheme } from '../contexts/ThemeContext'; // IMPORT THEME HOOK
+import { useTheme } from '../contexts/ThemeContext'; 
 
 // Capacitor Imports
 import { Filesystem, Directory, FileInfo } from '@capacitor/filesystem';
@@ -21,23 +21,60 @@ import { Toast } from '@capacitor/toast';
 type LoopMode = 'off' | 'all' | 'one';
 type PlayerMode = 'live' | 'local' | 'remote';
 
-const AudioPlayer: React.FC = () => {
-  const { theme } = useTheme(); // USE THEME
+// --- Helper Component: Scrolling Title (Marquee) ---
+const ScrollingTitle: React.FC<{ text: string, className?: string }> = ({ text, className }) => {
+  return (
+    <div className="w-full overflow-hidden relative flex justify-center mask-fade group cursor-default">
+      <style>{`
+        .mask-fade {
+          mask-image: linear-gradient(to right, transparent 0%, black 10%, black 90%, transparent 100%);
+          -webkit-mask-image: linear-gradient(to right, transparent 0%, black 10%, black 90%, transparent 100%);
+        }
+        @keyframes marquee {
+          0% { transform: translateX(0); }
+          100% { transform: translateX(-50%); }
+        }
+        .animate-marquee {
+          display: flex;
+          width: fit-content;
+          /* Slower speed for readability */
+          animation: marquee 25s linear infinite;
+        }
+        /* Pause on hover so user can read */
+        .group:hover .animate-marquee {
+          animation-play-state: paused;
+        }
+      `}</style>
+      
+      <div className={`animate-marquee whitespace-nowrap gap-12 px-4 ${className}`}>
+         <span>{text}</span>
+         <span aria-hidden="true">{text}</span> {/* Duplicate for loop */}
+      </div>
+    </div>
+  );
+};
 
+const AudioPlayer: React.FC = () => {
+  const { theme } = useTheme();
+
+  // --- Refs ---
   const audioRef = useRef<HTMLAudioElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
   
+  // --- State ---
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [status, setStatus] = useState<ConnectionStatus>(ConnectionStatus.DISCONNECTED);
   const [activeMode, setActiveMode] = useState<PlayerMode>('live');
 
+  // --- Playlist State ---
   const [localRecordings, setLocalRecordings] = useState<FileInfo[]>([]);
   const [remotePlaylist, setRemotePlaylist] = useState<DirectoryEntry[]>([]);
   const [currentIndex, setCurrentIndex] = useState<number>(-1);
   const [currentTrackUrl, setCurrentTrackUrl] = useState<string | null>(null);
   const [currentTrackTitle, setCurrentTrackTitle] = useState<string>("");
 
+  // --- Playback State ---
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [progress, setProgress] = useState(0); 
@@ -46,18 +83,22 @@ const AudioPlayer: React.FC = () => {
   const [isDragging, setIsDragging] = useState(false);
   const [isLiked, setIsLiked] = useState(false);
   
+  // --- Recording State ---
   const [isRecording, setIsRecording] = useState(false); 
   const [recordingDuration, setRecordingDuration] = useState(0);
   
+  // --- Save Prompt State ---
   const [showSavePrompt, setShowSavePrompt] = useState(false);
   const [pendingBlob, setPendingBlob] = useState<Blob | null>(null);
   const [saveName, setSaveName] = useState('');
 
+  // --- UI Overlays ---
   const [showRecordingsList, setShowRecordingsList] = useState(false);
   const [showExplorer, setShowExplorer] = useState(false);
   const [showFavorites, setShowFavorites] = useState(false);
   const [sleepTimer, setSleepTimer] = useState<number | null>(null);
 
+  // --- Init ---
   useEffect(() => {
     loadLocalRecordings();
     window.addEventListener('online', () => setIsOnline(true));
@@ -73,6 +114,7 @@ const AudioPlayer: React.FC = () => {
     } catch (e) { console.error(e); }
   };
 
+  // --- Favorites Logic ---
   const getFavoriteId = () => activeMode === 'live' ? 'live_stream' : (activeMode === 'local' ? currentTrackTitle : currentTrackUrl || '');
   const checkIfLiked = () => {
       const id = getFavoriteId();
@@ -124,6 +166,7 @@ const AudioPlayer: React.FC = () => {
       }
   };
 
+  // --- Player Logic ---
   const playLive = async () => {
     if(isRecording) toggleRecording(); 
     setActiveMode('live');
@@ -165,12 +208,13 @@ const AudioPlayer: React.FC = () => {
           const localUrl = Capacitor.convertFileSrc(uri.uri);
           if(audioRef.current) { audioRef.current.crossOrigin = null; setCurrentTrackUrl(localUrl); }
       } catch (err) {
-          console.error("Cache failed", err);
+          console.error("Cache failed, fallback", err);
           if(audioRef.current) { audioRef.current.crossOrigin = "anonymous"; setCurrentTrackUrl(url); }
           Toast.show({ text: 'Buffering failed. Recording disabled.', duration: 'long' });
       } finally { setIsLoading(false); }
   };
 
+  // --- Recording Logic ---
   const toggleRecording = async () => {
     if (isRecording) { if (mediaRecorderRef.current) mediaRecorderRef.current.stop(); } 
     else {
@@ -246,6 +290,7 @@ const AudioPlayer: React.FC = () => {
   return (
     <div className={`w-full max-w-md mx-auto backdrop-blur-xl border rounded-3xl p-6 shadow-2xl relative overflow-hidden min-h-[500px] flex flex-col justify-between transition-colors duration-300 ${theme.colors.cardBg} ${theme.colors.cardBorder}`}>
       
+      {/* --- SAVE PROMPT MODAL --- */}
       {showSavePrompt && (
         <div className="absolute inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
             <div className={`border rounded-2xl p-6 w-full max-w-sm shadow-2xl space-y-4 ${theme.colors.cardBg} ${theme.colors.cardBorder}`}>
@@ -269,12 +314,14 @@ const AudioPlayer: React.FC = () => {
       {showRecordingsList && <RecordingsList onClose={() => setShowRecordingsList(false)} onPlayRecording={(url) => { const idx = localRecordings.findIndex(f => url.includes(f.name)); playLocalFile(idx >= 0 ? idx : 0); setShowRecordingsList(false); }} currentPlayingUrl={currentTrackUrl} isPlayerPaused={!isPlaying} />}
       {showExplorer && <KirtanExplorer onClose={() => setShowExplorer(false)} onPlayTrack={playRemoteTrack} />}
 
+      {/* --- BACKGROUND --- */}
       <div className={`absolute top-0 left-1/2 -translate-x-1/2 w-48 h-48 blur-[60px] rounded-full pointer-events-none transition-colors duration-500 
         ${isRecording ? 'bg-red-500/20' : activeMode === 'live' ? 'bg-amber-500/10' : 'bg-blue-500/20'}`} 
       />
 
       <div className="relative z-10 flex flex-col items-center w-full">
         
+        {/* --- HEADER --- */}
         <div className="w-full flex justify-between items-center mb-6">
             <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium border
                 ${activeMode === 'live' ? 'bg-green-500/10 text-green-600 border-green-500/20' : 
@@ -295,6 +342,7 @@ const AudioPlayer: React.FC = () => {
             </div>
         </div>
 
+        {/* --- ARTWORK --- */}
         <div className="w-full h-32 flex items-center justify-center mb-4">
              {isLoading ? (
                  <div className={`flex flex-col items-center gap-2 ${theme.colors.accent}`}><Loader2 className="w-8 h-8 animate-spin" /><span className="text-xs">Buffering...</span></div>
@@ -303,16 +351,23 @@ const AudioPlayer: React.FC = () => {
              )}
         </div>
 
+        {/* --- TITLE & LIKE --- */}
         <div className="w-full flex items-center gap-4 mb-6 px-4">
-            <div className="flex-1 min-w-0 text-center">
-                <h3 className={`text-xl font-bold truncate ${theme.colors.textMain}`}>{activeMode === 'live' ? "Sri Harmandir Sahib" : currentTrackTitle || "Unknown Track"}</h3>
-                <p className={`text-sm ${theme.colors.textSub}`}>{activeMode === 'live' ? "Amritsar, Punjab" : activeMode === 'local' ? "Saved Recording" : "SGPC Archive"}</p>
+            <div className="flex-1 min-w-0">
+                <ScrollingTitle 
+                    text={activeMode === 'live' ? "Sri Harmandir Sahib" : currentTrackTitle || "Unknown Track"} 
+                    className={`text-2xl font-serif font-medium tracking-wide ${theme.colors.textMain}`}
+                />
+                <p className={`text-center text-xs uppercase tracking-[0.2em] opacity-80 mt-1 ${theme.colors.textSub}`}>
+                    {activeMode === 'live' ? "Amritsar, Punjab" : activeMode === 'local' ? "Saved Recording" : "SGPC Archive"}
+                </p>
             </div>
             <button onClick={toggleLike} className={`p-2 rounded-full transition-colors ${theme.colors.hover}`}>
                 <Heart className={`w-6 h-6 ${isLiked ? 'fill-red-500 text-red-500' : theme.colors.textSub}`} />
             </button>
         </div>
 
+        {/* --- SEEK BAR --- */}
         <div className="w-full px-2 mb-6">
             <div className={`flex justify-between text-[10px] font-medium mb-2 ${theme.colors.textSub}`}>
                 <span className={activeMode === 'live' ? 'text-red-500 font-bold animate-pulse' : ''}>{activeMode === 'live' ? 'LIVE' : formatTime(progress)}</span>
@@ -332,6 +387,7 @@ const AudioPlayer: React.FC = () => {
             </div>
         </div>
 
+        {/* --- CONTROLS --- */}
         <div className="flex items-center justify-between w-full px-4">
             {activeMode === 'live' ? (
                  <button onClick={() => { const opts = [null,15,30,60]; setSleepTimer(opts[(opts.indexOf(sleepTimer)+1)%opts.length]); }} className={`flex flex-col items-center gap-1 ${sleepTimer ? theme.colors.accent : theme.colors.textSub}`}>
