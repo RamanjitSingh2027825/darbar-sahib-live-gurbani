@@ -367,8 +367,14 @@ const AudioPlayer: React.FC = () => {
         </div>
 
       </div>
-
-      <audio ref={audioRef} crossOrigin="anonymous" playsInline onError={() => setStatus(ConnectionStatus.ERROR)} />
+<audio 
+        ref={audioRef} 
+        playsInline 
+        onError={(e) => {
+            console.error("Audio Error:", e.currentTarget.error);
+            setStatus(ConnectionStatus.ERROR);
+        }} 
+      />
     </div>
   );
 };
