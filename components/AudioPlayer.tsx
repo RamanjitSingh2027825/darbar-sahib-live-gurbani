@@ -2,13 +2,14 @@ import React, { useEffect, useRef, useState } from 'react';
 import { 
   Play, Pause, Radio, Loader2, Moon, Mic, Square, 
   ListMusic, SkipBack, SkipForward, Repeat, 
-  Repeat1, WifiOff, Globe, Search, Download, X
+  Repeat1, WifiOff, Globe, Search, Download, X, Heart
 } from 'lucide-react';
 import { STREAM_URL } from '../constants';
 import { ConnectionStatus } from '../types';
 import WaveVisualizer from './WaveVisualizer';
 import RecordingsList from './RecordingsList';
 import KirtanExplorer from './KirtanExplorer';
+import FavoritesList, { FavoriteItem } from './FavoritesList';
 import { DirectoryEntry } from '../services/sgpcService';
 
 // Capacitor Imports
@@ -44,6 +45,7 @@ const AudioPlayer: React.FC = () => {
   const [duration, setDuration] = useState(0);
   const [loopMode, setLoopMode] = useState<LoopMode>('off');
   const [isDragging, setIsDragging] = useState(false);
+  const [isLiked, setIsLiked] = useState(false);
   
   // --- Recording State ---
   const [isRecording, setIsRecording] = useState(false); 
@@ -57,6 +59,7 @@ const AudioPlayer: React.FC = () => {
   // --- UI Overlays ---
   const [showRecordingsList, setShowRecordingsList] = useState(false);
   const [showExplorer, setShowExplorer] = useState(false);
+  const [showFavorites, setShowFavorites] = useState(false);
   const [sleepTimer, setSleepTimer] = useState<number | null>(null);
 
   // --- Init ---
@@ -66,6 +69,10 @@ const AudioPlayer: React.FC = () => {
     window.addEventListener('offline', () => setIsOnline(false));
   }, []);
 
+  useEffect(() => {
+      checkIfLiked();
+  }, [currentTrackUrl, activeMode]);
+
   const loadLocalRecordings = async () => {
     try {
       const result = await Filesystem.readdir({ path: '', directory: Directory.Documents });
@@ -73,11 +80,80 @@ const AudioPlayer: React.FC = () => {
     } catch (e) { console.error(e); }
   };
 
+  // --- Favorites Logic ---
+  const getFavoriteId = () => {
+      if (activeMode === 'live') return 'live_stream';
+      if (activeMode === 'local') return currentTrackTitle; // filename
+      return currentTrackUrl || ''; // remote url
+  };
+
+  const checkIfLiked = () => {
+      const id = getFavoriteId();
+      if(!id) { setIsLiked(false); return; }
+      try {
+          const stored = localStorage.getItem('darbar_favorites');
+          if(stored) {
+              const favs = JSON.parse(stored) as FavoriteItem[];
+              setIsLiked(favs.some(f => f.id === id));
+          } else setIsLiked(false);
+      } catch(e) { setIsLiked(false); }
+  };
+
+  const toggleLike = () => {
+      const id = getFavoriteId();
+      if(!id) return;
+
+      try {
+          const stored = localStorage.getItem('darbar_favorites');
+          let favs: FavoriteItem[] = stored ? JSON.parse(stored) : [];
+          
+          if (isLiked) {
+              favs = favs.filter(f => f.id !== id);
+              setIsLiked(false);
+              Toast.show({ text: 'Removed from Liked', duration: 'short' });
+          } else {
+              const newItem: FavoriteItem = {
+                  id: id,
+                  title: activeMode === 'live' ? 'Sri Harmandir Sahib Live' : currentTrackTitle,
+                  type: activeMode,
+                  url: activeMode === 'live' ? STREAM_URL : (currentTrackUrl || ''),
+                  date: Date.now()
+              };
+              favs.push(newItem);
+              setIsLiked(true);
+              Toast.show({ text: 'Added to Liked', duration: 'short' });
+          }
+          localStorage.setItem('darbar_favorites', JSON.stringify(favs));
+      } catch(e) { console.error(e); }
+  };
+
+  const playFavorite = (item: FavoriteItem) => {
+      setShowFavorites(false);
+      if (item.type === 'live') {
+          playLive();
+      } else if (item.type === 'local') {
+          // Find in local recordings
+          const idx = localRecordings.findIndex(f => f.name === item.id);
+          if (idx !== -1) playLocalFile(idx);
+          else alert("File not found locally.");
+      } else if (item.type === 'remote') {
+          // Play remote item (create single item playlist)
+          const entry: DirectoryEntry = { 
+              name: item.title + '.mp3', // Hack to restore extension if needed by logic
+              url: item.url, 
+              is_file: true, 
+              is_mp3: true 
+          };
+          playRemoteTrack(item.url, item.title, [entry]);
+      }
+  };
+
   // --- Player Logic ---
   const playLive = async () => {
     if(isRecording) toggleRecording(); 
     setActiveMode('live');
     setCurrentTrackUrl(null); 
+    setCurrentTrackTitle("Sri Harmandir Sahib");
     
     const audio = audioRef.current;
     if(audio) {
@@ -142,10 +218,8 @@ const AudioPlayer: React.FC = () => {
   // --- Recording Logic ---
   const toggleRecording = async () => {
     if (isRecording) {
-        // STOP
         if (mediaRecorderRef.current) mediaRecorderRef.current.stop();
     } else {
-        // START
         if (!isPlaying) { alert("Play audio first"); return; }
         if (activeMode === 'local') { alert("Cannot re-record a saved file."); return; }
         
@@ -163,17 +237,12 @@ const AudioPlayer: React.FC = () => {
         
         mediaRecorder.onstop = () => {
             if(chunksRef.current.length === 0) { setIsRecording(false); return; }
-            
             const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
-            
-            // Prepare Default Name
             const prefix = activeMode === 'live' ? 'Live' : 'Clip';
             const timestamp = new Date().toISOString().slice(0,16).replace(/[:T]/g,'-');
-            const suggestion = `Darbar_${prefix}_${timestamp}`;
             
-            // Open Save Prompt
             setPendingBlob(blob);
-            setSaveName(suggestion);
+            setSaveName(`Darbar_${prefix}_${timestamp}`);
             setShowSavePrompt(true);
             
             setIsRecording(false);
@@ -185,35 +254,23 @@ const AudioPlayer: React.FC = () => {
     }
   };
 
-  // --- Confirm Save Logic ---
   const handleConfirmSave = async () => {
       if (!pendingBlob || !saveName.trim()) return;
-      
       let fileName = saveName.trim();
-      // Ensure .webm extension
       if (!fileName.toLowerCase().endsWith('.webm')) fileName += '.webm';
 
       try {
           const reader = new FileReader();
           reader.onloadend = async () => {
               const base64 = (reader.result as string).split(',')[1];
-              await Filesystem.writeFile({
-                  path: fileName,
-                  data: base64,
-                  directory: Directory.Documents
-              });
+              await Filesystem.writeFile({ path: fileName, data: base64, directory: Directory.Documents });
               Toast.show({ text: 'Saved Successfully!', duration: 'short' });
               loadLocalRecordings();
-              
-              // Cleanup
               setPendingBlob(null);
               setShowSavePrompt(false);
           };
           reader.readAsDataURL(pendingBlob);
-      } catch (e) {
-          console.error(e);
-          alert("Failed to save file.");
-      }
+      } catch (e) { console.error(e); alert("Failed to save file."); }
   };
 
   const handleDiscardSave = () => {
@@ -222,7 +279,6 @@ const AudioPlayer: React.FC = () => {
       Toast.show({ text: 'Recording Discarded', duration: 'short' });
   };
   
-  // Timer
   useEffect(() => {
     let interval: any;
     if(isRecording) interval = setInterval(() => setRecordingDuration(s => s+1), 1000);
@@ -277,39 +333,14 @@ const AudioPlayer: React.FC = () => {
      return `${m}:${sec.toString().padStart(2,'0')}`;
   };
 
-  // --- Controls ---
   const togglePlay = () => audioRef.current?.paused ? audioRef.current?.play() : audioRef.current?.pause();
-  
-  const handleNext = () => {
-      if (activeMode === 'live') return;
-      let nextIdx = currentIndex + 1;
-      if (activeMode === 'local') {
-          if (nextIdx >= localRecordings.length) nextIdx = 0;
-          playLocalFile(nextIdx);
-      } else if (activeMode === 'remote') {
-          if (nextIdx >= remotePlaylist.length) nextIdx = 0;
-          const track = remotePlaylist[nextIdx];
-          playRemoteTrack(track.url, track.name, remotePlaylist);
-      }
-  };
-
-  const handlePrev = () => {
-      if (activeMode === 'live') return;
-      let prevIdx = currentIndex - 1;
-      if (activeMode === 'local') {
-          if (prevIdx < 0) prevIdx = localRecordings.length - 1;
-          playLocalFile(prevIdx);
-      } else if (activeMode === 'remote') {
-          if (prevIdx < 0) prevIdx = remotePlaylist.length - 1;
-          const track = remotePlaylist[prevIdx];
-          playRemoteTrack(track.url, track.name, remotePlaylist);
-      }
-  };
+  const handleNext = () => { if (activeMode === 'live') return; let next = currentIndex + 1; if (activeMode === 'local' && next >= localRecordings.length) next = 0; else if (activeMode === 'remote' && next >= remotePlaylist.length) next = 0; activeMode === 'local' ? playLocalFile(next) : playRemoteTrack(remotePlaylist[next].url, remotePlaylist[next].name, remotePlaylist); };
+  const handlePrev = () => { if (activeMode === 'live') return; let prev = currentIndex - 1; if (activeMode === 'local' && prev < 0) prev = localRecordings.length - 1; else if (activeMode === 'remote' && prev < 0) prev = remotePlaylist.length - 1; activeMode === 'local' ? playLocalFile(prev) : playRemoteTrack(remotePlaylist[prev].url, remotePlaylist[prev].name, remotePlaylist); };
 
   return (
     <div className="w-full max-w-md mx-auto bg-slate-900/80 backdrop-blur-xl border border-slate-800 rounded-3xl p-6 shadow-2xl relative overflow-hidden min-h-[500px] flex flex-col justify-between">
       
-      {/* --- SAVE PROMPT MODAL --- */}
+      {/* --- OVERLAYS --- */}
       {showSavePrompt && (
         <div className="absolute inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
             <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-sm shadow-2xl space-y-4">
@@ -319,49 +350,19 @@ const AudioPlayer: React.FC = () => {
                 </div>
                 <div>
                     <label className="text-xs text-slate-400 ml-1 uppercase font-bold tracking-wider">File Name</label>
-                    <input 
-                        type="text" 
-                        value={saveName}
-                        onChange={(e) => setSaveName(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-4 py-3 text-slate-200 focus:border-amber-500 outline-none mt-1"
-                        autoFocus
-                    />
+                    <input type="text" value={saveName} onChange={(e) => setSaveName(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-lg px-4 py-3 text-slate-200 focus:border-amber-500 outline-none mt-1" autoFocus />
                 </div>
                 <div className="flex gap-3 pt-2">
-                    <button 
-                        onClick={handleDiscardSave}
-                        className="flex-1 py-3 rounded-xl bg-slate-800 text-slate-400 font-medium hover:bg-slate-700 hover:text-white transition-colors"
-                    >
-                        Discard
-                    </button>
-                    <button 
-                        onClick={handleConfirmSave}
-                        className="flex-1 py-3 rounded-xl bg-amber-500 text-slate-900 font-bold hover:bg-amber-400 transition-colors"
-                    >
-                        Save
-                    </button>
+                    <button onClick={handleDiscardSave} className="flex-1 py-3 rounded-xl bg-slate-800 text-slate-400 font-medium hover:bg-slate-700 hover:text-white">Discard</button>
+                    <button onClick={handleConfirmSave} className="flex-1 py-3 rounded-xl bg-amber-500 text-slate-900 font-bold hover:bg-amber-400">Save</button>
                 </div>
             </div>
         </div>
       )}
 
-      {/* --- OVERLAYS --- */}
-      {showRecordingsList && (
-        <RecordingsList 
-          onClose={() => setShowRecordingsList(false)}
-          onPlayRecording={(url) => {
-              const idx = localRecordings.findIndex(f => url.includes(f.name));
-              playLocalFile(idx >= 0 ? idx : 0);
-              setShowRecordingsList(false);
-          }}
-          currentPlayingUrl={currentTrackUrl}
-          isPlayerPaused={!isPlaying}
-        />
-      )}
-
-      {showExplorer && (
-          <KirtanExplorer onClose={() => setShowExplorer(false)} onPlayTrack={playRemoteTrack} />
-      )}
+      {showFavorites && <FavoritesList onClose={() => setShowFavorites(false)} onPlay={playFavorite} />}
+      {showRecordingsList && <RecordingsList onClose={() => setShowRecordingsList(false)} onPlayRecording={(url) => { const idx = localRecordings.findIndex(f => url.includes(f.name)); playLocalFile(idx >= 0 ? idx : 0); setShowRecordingsList(false); }} currentPlayingUrl={currentTrackUrl} isPlayerPaused={!isPlaying} />}
+      {showExplorer && <KirtanExplorer onClose={() => setShowExplorer(false)} onPlayTrack={playRemoteTrack} />}
 
       {/* --- BACKGROUND --- */}
       <div className={`absolute top-0 left-1/2 -translate-x-1/2 w-48 h-48 blur-[60px] rounded-full pointer-events-none transition-colors duration-500 
@@ -382,11 +383,13 @@ const AudioPlayer: React.FC = () => {
             </div>
 
             <div className="flex gap-2">
-                {activeMode !== 'live' && (
-                    <button onClick={playLive} className="p-2 hover:bg-green-500/10 rounded-full text-slate-400 hover:text-green-400" title="Live Radio">
-                        <Globe className="w-5 h-5" />
-                    </button>
-                )}
+                {activeMode !== 'live' && <button onClick={playLive} className="p-2 hover:bg-green-500/10 rounded-full text-slate-400 hover:text-green-400"><Globe className="w-5 h-5" /></button>}
+                
+                {/* Favorites Button */}
+                <button onClick={() => setShowFavorites(true)} className="p-2 hover:bg-slate-800 rounded-full relative">
+                    <Heart className="w-5 h-5 text-slate-400" />
+                </button>
+
                 <button onClick={() => setShowExplorer(true)} className="p-2 hover:bg-slate-800 rounded-full"><Search className="w-5 h-5 text-slate-400" /></button>
                 <button onClick={() => setShowRecordingsList(true)} className="p-2 hover:bg-slate-800 rounded-full"><ListMusic className="w-5 h-5 text-slate-400" /></button>
             </div>
@@ -395,31 +398,27 @@ const AudioPlayer: React.FC = () => {
         {/* --- ARTWORK --- */}
         <div className="w-full h-32 flex items-center justify-center mb-4">
              {isLoading ? (
-                 <div className="flex flex-col items-center gap-2 text-amber-500">
-                     <Loader2 className="w-8 h-8 animate-spin" />
-                     <span className="text-xs">Buffering...</span>
-                 </div>
+                 <div className="flex flex-col items-center gap-2 text-amber-500"><Loader2 className="w-8 h-8 animate-spin" /><span className="text-xs">Buffering...</span></div>
              ) : (
                  <WaveVisualizer isPlaying={isPlaying} />
              )}
         </div>
 
-        {/* --- INFO --- */}
-        <div className="text-center mb-6 px-4">
-            <h3 className="text-xl font-bold text-slate-100 truncate">
-                {activeMode === 'live' ? "Sri Harmandir Sahib" : currentTrackTitle || "Unknown Track"}
-            </h3>
-            <p className="text-sm text-slate-500">
-                {activeMode === 'live' ? "Amritsar, Punjab" : activeMode === 'local' ? "Saved Recording" : "SGPC Archive"}
-            </p>
+        {/* --- TITLE & LIKE --- */}
+        <div className="w-full flex items-center gap-4 mb-6 px-4">
+            <div className="flex-1 min-w-0 text-center">
+                <h3 className="text-xl font-bold text-slate-100 truncate">{activeMode === 'live' ? "Sri Harmandir Sahib" : currentTrackTitle || "Unknown Track"}</h3>
+                <p className="text-sm text-slate-500">{activeMode === 'live' ? "Amritsar, Punjab" : activeMode === 'local' ? "Saved Recording" : "SGPC Archive"}</p>
+            </div>
+            <button onClick={toggleLike} className="p-2 rounded-full hover:bg-slate-800 transition-colors">
+                <Heart className={`w-6 h-6 ${isLiked ? 'fill-red-500 text-red-500' : 'text-slate-500'}`} />
+            </button>
         </div>
 
         {/* --- SEEK BAR --- */}
         <div className="w-full px-2 mb-6">
             <div className="flex justify-between text-[10px] text-slate-500 mb-2">
-                <span className={activeMode === 'live' ? 'text-red-400 font-bold animate-pulse' : ''}>
-                    {activeMode === 'live' ? 'LIVE' : formatTime(progress)}
-                </span>
+                <span className={activeMode === 'live' ? 'text-red-400 font-bold animate-pulse' : ''}>{activeMode === 'live' ? 'LIVE' : formatTime(progress)}</span>
                 <span>{activeMode === 'live' ? 'BROADCAST' : formatTime(duration)}</span>
             </div>
             <div className="relative h-6 flex items-center">
@@ -427,11 +426,7 @@ const AudioPlayer: React.FC = () => {
                     type="range" min="0" max={activeMode === 'live' ? 100 : (duration || 100)} 
                     value={activeMode === 'live' ? 100 : progress}
                     disabled={activeMode === 'live'}
-                    onChange={(e) => {
-                        const t = parseFloat(e.target.value);
-                        setProgress(t);
-                        if(audioRef.current) audioRef.current.currentTime = t;
-                    }}
+                    onChange={(e) => { const t = parseFloat(e.target.value); setProgress(t); if(audioRef.current) audioRef.current.currentTime = t; }}
                     onMouseDown={() => setIsDragging(true)} onMouseUp={() => setIsDragging(false)}
                     onTouchStart={() => setIsDragging(true)} onTouchEnd={() => setIsDragging(false)}
                     className={`w-full h-1.5 bg-slate-800 rounded-full appearance-none ${activeMode === 'live' ? 'cursor-not-allowed [&::-webkit-slider-thumb]:hidden' : 'cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-amber-400'}`}
