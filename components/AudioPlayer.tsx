@@ -92,19 +92,16 @@ const AudioPlayer: React.FC = () => {
     setCurrentIndex(index);
     setCurrentTrackUrl(src);
     setCurrentTrackTitle(file.name);
-    // Audio src update handled by effect or render
   };
 
   const playRemoteTrack = (url: string, name: string, playlist: DirectoryEntry[]) => {
-      // Find index in the passed playlist
       const idx = playlist.findIndex(p => p.url === url);
-      
       setActiveMode('remote');
       setRemotePlaylist(playlist);
       setCurrentIndex(idx);
       setCurrentTrackUrl(url);
       setCurrentTrackTitle(decodeURIComponent(name).replace('.mp3', ''));
-      setShowExplorer(false); // Close explorer to show player
+      setShowExplorer(false);
   };
 
   // --- Controls ---
@@ -144,13 +141,11 @@ const AudioPlayer: React.FC = () => {
       }
   };
 
-  // --- Recording Logic (Same as before) ---
+  // --- Recording Logic ---
   const toggleRecording = async () => {
     if (isRecording) {
-        // Stop
         if (mediaRecorderRef.current) mediaRecorderRef.current.stop();
     } else {
-        // Start
         if (activeMode !== 'live' && !isPlaying) { alert("Play audio first"); return; }
         const audio = audioRef.current;
         // @ts-ignore
@@ -179,7 +174,6 @@ const AudioPlayer: React.FC = () => {
     }
   };
   
-  // Timer Effect
   useEffect(() => {
     let interval: any;
     if(isRecording) interval = setInterval(() => setRecordingDuration(s => s+1), 1000);
@@ -191,7 +185,6 @@ const AudioPlayer: React.FC = () => {
     const audio = audioRef.current;
     if(!audio) return;
 
-    // Source Management
     if (activeMode === 'live') {
         if (audio.src !== STREAM_URL) { audio.src = STREAM_URL; audio.load(); }
     } else if (currentTrackUrl && audio.src !== currentTrackUrl) {
@@ -223,9 +216,8 @@ const AudioPlayer: React.FC = () => {
         audio.removeEventListener('timeupdate', onTimeUpdate);
         audio.removeEventListener('ended', onEnded);
     };
-  }, [activeMode, currentTrackUrl, loopMode, currentIndex]); // Dependencies critical here
+  }, [activeMode, currentTrackUrl, loopMode, currentIndex]);
 
-  // Helper
   const formatTime = (s: number) => {
      if(!Number.isFinite(s)) return "00:00";
      const m=Math.floor(s/60), sec=Math.floor(s%60);
@@ -300,15 +292,20 @@ const AudioPlayer: React.FC = () => {
             </p>
         </div>
 
-        {/* --- SEEK BAR (Non-Live Only) --- */}
+        {/* --- SEEK BAR --- */}
         <div className="w-full px-2 mb-6">
             <div className="flex justify-between text-[10px] text-slate-500 mb-2">
-                <span>{activeMode === 'live' ? 'LIVE' : formatTime(progress)}</span>
-                <span>{activeMode === 'live' ? 'STREAM' : formatTime(duration)}</span>
+                <span className={activeMode === 'live' ? 'text-red-400 font-bold animate-pulse' : ''}>
+                    {activeMode === 'live' ? 'LIVE' : formatTime(progress)}
+                </span>
+                <span>{activeMode === 'live' ? 'BROADCAST' : formatTime(duration)}</span>
             </div>
             <div className="relative h-6 flex items-center">
                 <input 
-                    type="range" min="0" max={duration || 100} value={progress}
+                    type="range" 
+                    min="0" 
+                    max={activeMode === 'live' ? 100 : (duration || 100)} 
+                    value={activeMode === 'live' ? 100 : progress}
                     disabled={activeMode === 'live'}
                     onChange={(e) => {
                         const t = parseFloat(e.target.value);
@@ -317,16 +314,24 @@ const AudioPlayer: React.FC = () => {
                     }}
                     onMouseDown={() => setIsDragging(true)} onMouseUp={() => setIsDragging(false)}
                     onTouchStart={() => setIsDragging(true)} onTouchEnd={() => setIsDragging(false)}
-                    className={`w-full h-1.5 bg-slate-800 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-amber-400 ${activeMode === 'live' ? 'opacity-50' : ''}`}
+                    className={`w-full h-1.5 bg-slate-800 rounded-full appearance-none 
+                        ${activeMode === 'live' 
+                            ? 'cursor-not-allowed [&::-webkit-slider-thumb]:hidden' // Hide Thumb
+                            : 'cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-amber-400'
+                        }`}
                 />
-                <div className="absolute left-0 h-1.5 rounded-l-full bg-amber-500 pointer-events-none" 
-                     style={{width: `${(progress/duration)*100}%`}} />
+                {/* Red Progress for Live, Amber for others */}
+                <div 
+                    className={`absolute left-0 h-1.5 rounded-full pointer-events-none transition-all duration-500
+                        ${activeMode === 'live' ? 'bg-red-500 w-full shadow-[0_0_10px_rgba(239,68,68,0.5)]' : 'bg-amber-500 rounded-l-full'}
+                    `} 
+                    style={{ width: activeMode === 'live' ? '100%' : `${(progress/duration)*100}%` }} 
+                />
             </div>
         </div>
 
         {/* --- CONTROLS --- */}
         <div className="flex items-center justify-between w-full px-4">
-            {/* Left Button (Loop or Sleep) */}
             {activeMode === 'live' ? (
                  <button onClick={() => {
                      const opts = [null,15,30,60]; setSleepTimer(opts[(opts.indexOf(sleepTimer)+1)%opts.length]);
@@ -339,7 +344,6 @@ const AudioPlayer: React.FC = () => {
                  </button>
             )}
 
-            {/* Transport Controls */}
             {activeMode !== 'live' && (
                 <button onClick={handlePrev} className="p-2 text-slate-300"><SkipBack className="w-8 h-8 fill-current" /></button>
             )}
@@ -352,7 +356,6 @@ const AudioPlayer: React.FC = () => {
                 <button onClick={handleNext} className="p-2 text-slate-300"><SkipForward className="w-8 h-8 fill-current" /></button>
             )}
 
-            {/* Right Button (Rec or Live Switch) */}
             {activeMode === 'live' ? (
                 <button onClick={toggleRecording} className={`flex flex-col items-center gap-1 ${isRecording?'text-red-400':'text-slate-500'}`}>
                     {isRecording ? <Square className="w-5 h-5 fill-current"/> : <Mic className="w-5 h-5"/>}
@@ -367,7 +370,8 @@ const AudioPlayer: React.FC = () => {
         </div>
 
       </div>
-<audio 
+      
+      <audio 
         ref={audioRef} 
         playsInline 
         onError={(e) => {

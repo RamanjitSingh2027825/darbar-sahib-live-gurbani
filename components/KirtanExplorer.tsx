@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { 
   Folder, Music, ArrowLeft, Loader2, X, 
-  Calendar, User, Play 
+  Calendar, User, Play, Search 
 } from 'lucide-react';
 import { fetchDirectory, KIRTAN_BASE, RAGIWISE_BASE, DirectoryEntry } from '../services/sgpcService';
 
@@ -18,12 +18,21 @@ const KirtanExplorer: React.FC<KirtanExplorerProps> = ({ onClose, onPlayTrack })
   const [history, setHistory] = useState<string[]>([]);
   const [entries, setEntries] = useState<DirectoryEntry[]>([]);
   const [loading, setLoading] = useState(false);
+  
+  // Search State
+  const [searchQuery, setSearchQuery] = useState('');
 
   // Initial Load
   useEffect(() => {
     loadPath(activeTab === 'years' ? KIRTAN_BASE : RAGIWISE_BASE);
     setHistory([]);
+    setSearchQuery(''); // Clear search on tab change
   }, [activeTab]);
+
+  // Clear search when navigating folders
+  useEffect(() => {
+      setSearchQuery('');
+  }, [currentPath]);
 
   const loadPath = async (url: string) => {
     setLoading(true);
@@ -41,14 +50,12 @@ const KirtanExplorer: React.FC<KirtanExplorerProps> = ({ onClose, onPlayTrack })
   const handleEntryClick = (entry: DirectoryEntry) => {
     if (entry.is_file) {
       if (entry.is_mp3) {
-        // Create a playlist of all MP3s in current folder so "Next" works
+        // Pass the filtered list (or full list) as playlist? 
+        // Usually full list of current directory is better for "Next" button context
         const playlist = entries.filter(e => e.is_mp3);
         onPlayTrack(entry.url, entry.name, playlist);
-        // We don't close the explorer immediately so user can browse more if they want,
-        // or you can call onClose() here if you prefer.
       }
     } else {
-      // It's a folder, navigate down
       setHistory([...history, currentPath]);
       loadPath(entry.url);
     }
@@ -62,6 +69,13 @@ const KirtanExplorer: React.FC<KirtanExplorerProps> = ({ onClose, onPlayTrack })
     }
   };
 
+  // Filter Entries based on Search
+  const filteredEntries = entries.filter(entry => {
+      if (!searchQuery) return true;
+      const displayName = decodeURIComponent(entry.name).replace('.mp3', '');
+      return displayName.toLowerCase().includes(searchQuery.toLowerCase());
+  });
+
   return (
     <div className="absolute inset-0 z-50 bg-slate-950 flex flex-col animate-in slide-in-from-bottom-4 duration-300">
       
@@ -71,12 +85,12 @@ const KirtanExplorer: React.FC<KirtanExplorerProps> = ({ onClose, onPlayTrack })
            <Music className="w-5 h-5 text-amber-500" />
            Past Kirtan
         </h2>
-        <button onClick={onClose} className="p-2 bg-slate-800 rounded-full text-slate-400">
+        <button onClick={onClose} className="p-2 bg-slate-800 rounded-full text-slate-400 hover:text-white">
           <X className="w-5 h-5" />
         </button>
       </div>
 
-      {/* Tabs */}
+      {/* Navigation Tabs (Only show at root) */}
       {history.length === 0 && (
         <div className="flex p-2 gap-2 bg-slate-900/50">
           <button 
@@ -94,6 +108,28 @@ const KirtanExplorer: React.FC<KirtanExplorerProps> = ({ onClose, onPlayTrack })
         </div>
       )}
 
+      {/* Search Bar */}
+      <div className="px-3 py-2 bg-slate-900/30 border-b border-slate-800">
+          <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+              <input 
+                  type="text"
+                  placeholder={`Search ${activeTab === 'ragis' && history.length === 0 ? 'Ragis' : 'tracks'}...`}
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full bg-slate-800/50 border border-slate-700 text-slate-200 text-sm rounded-full py-2 pl-9 pr-4 focus:outline-none focus:border-amber-500/50 placeholder:text-slate-600"
+              />
+              {searchQuery && (
+                  <button 
+                    onClick={() => setSearchQuery('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 p-0.5 bg-slate-700 rounded-full text-slate-300"
+                  >
+                      <X className="w-3 h-3" />
+                  </button>
+              )}
+          </div>
+      </div>
+
       {/* Breadcrumb / Back Navigation */}
       {history.length > 0 && (
          <div className="px-4 py-2 bg-slate-900/30 flex items-center gap-2 border-b border-slate-800">
@@ -101,7 +137,7 @@ const KirtanExplorer: React.FC<KirtanExplorerProps> = ({ onClose, onPlayTrack })
                 <ArrowLeft className="w-5 h-5" />
             </button>
             <span className="text-xs text-slate-500 truncate font-mono">
-                .../{currentPath.split('/').filter(Boolean).pop()}
+                .../{decodeURIComponent(currentPath.split('/').filter(Boolean).pop() || '')}
             </span>
          </div>
       )}
@@ -115,7 +151,7 @@ const KirtanExplorer: React.FC<KirtanExplorerProps> = ({ onClose, onPlayTrack })
             </div>
         ) : (
             <div className="space-y-1">
-                {entries.map((entry, idx) => (
+                {filteredEntries.map((entry, idx) => (
                     <button
                         key={idx + entry.name}
                         onClick={() => handleEntryClick(entry)}
@@ -126,6 +162,7 @@ const KirtanExplorer: React.FC<KirtanExplorerProps> = ({ onClose, onPlayTrack })
                         </div>
                         <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium text-slate-200 truncate group-hover:text-amber-400 transition-colors">
+                                {/* Display Name Cleaned up */}
                                 {decodeURIComponent(entry.name).replace('.mp3', '')}
                             </p>
                             <p className="text-[10px] text-slate-500">
@@ -134,9 +171,17 @@ const KirtanExplorer: React.FC<KirtanExplorerProps> = ({ onClose, onPlayTrack })
                         </div>
                     </button>
                 ))}
-                {entries.length === 0 && !loading && (
-                    <div className="text-center p-8 text-slate-500 text-sm">
-                        Empty Directory
+                
+                {filteredEntries.length === 0 && !loading && (
+                    <div className="text-center p-8 text-slate-500 text-sm flex flex-col items-center">
+                        {searchQuery ? (
+                            <>
+                                <span className="mb-1">No results found for "{searchQuery}"</span>
+                                <button onClick={() => setSearchQuery('')} className="text-amber-500 text-xs underline">Clear Search</button>
+                            </>
+                        ) : (
+                           "Empty Directory"
+                        )}
                     </div>
                 )}
             </div>
