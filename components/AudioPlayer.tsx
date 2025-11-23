@@ -311,7 +311,22 @@ const AudioPlayer: React.FC = () => {
       )}
 
       {showFavorites && <FavoritesList onClose={() => setShowFavorites(false)} onPlay={playFavorite} />}
-      {showRecordingsList && <RecordingsList onClose={() => setShowRecordingsList(false)} onPlayRecording={(url) => { const idx = localRecordings.findIndex(f => url.includes(f.name)); playLocalFile(idx >= 0 ? idx : 0); setShowRecordingsList(false); }} currentPlayingUrl={currentTrackUrl} isPlayerPaused={!isPlaying} />}
+      
+      {/* FIXED: Passing filename string now, not full URL */}
+      {showRecordingsList && (
+        <RecordingsList 
+            onClose={() => setShowRecordingsList(false)} 
+            onPlayRecording={(fileName) => { 
+                const idx = localRecordings.findIndex(f => f.name === fileName); // Strict match
+                playLocalFile(idx >= 0 ? idx : 0); 
+                setShowRecordingsList(false); 
+            }} 
+            currentPlayingUrl={currentTrackUrl} 
+            isPlayerPaused={!isPlaying} 
+            onFilesChanged={loadLocalRecordings} 
+        />
+      )}
+      
       {showExplorer && <KirtanExplorer onClose={() => setShowExplorer(false)} onPlayTrack={playRemoteTrack} />}
 
       {/* --- BACKGROUND --- */}
