@@ -35,13 +35,6 @@ const AppContent: React.FC = () => {
 
         <main className="flex-1 overflow-y-auto overflow-x-hidden w-full flex flex-col justify-center">
           <div className="container mx-auto px-4 py-4 flex flex-col items-center gap-8">
-            <div className="text-center space-y-3 animate-in fade-in slide-in-from-bottom-4 duration-700">
-                <h2 className={`text-3xl md:text-5xl font-serif font-medium leading-tight ${theme.colors.textMain}`}>
-                    Connect with the <br/>
-                    <span className={`italic ${theme.colors.accent}`}>Divine Spirit</span>
-                </h2>
-            </div>
-            
             <AudioPlayer />
           </div>
         </main>

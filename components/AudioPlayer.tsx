@@ -6,7 +6,6 @@ import {
 } from 'lucide-react';
 import { STREAM_URL } from '../constants';
 import { ConnectionStatus } from '../types';
-import WaveVisualizer from './WaveVisualizer';
 import RecordingsList from './RecordingsList';
 import KirtanExplorer from './KirtanExplorer';
 import FavoritesList, { FavoriteItem } from './FavoritesList';
@@ -18,10 +17,17 @@ import { Filesystem, Directory, FileInfo } from '@capacitor/filesystem';
 import { Capacitor } from '@capacitor/core';
 import { Toast } from '@capacitor/toast';
 
+// --- AUTO-IMPORT IMAGES ---
+const imagesGlob = import.meta.glob('../assets/darbar-sahib-pics/*.{jpg,jpeg,png,webp}', { eager: true });
+// @ts-ignore
+const localImages = Object.values(imagesGlob).map(img => img.default);
+
+const FALLBACK_IMAGE = "https://upload.wikimedia.org/wikipedia/commons/thumb/9/94/Golden_Temple_India.jpg/800px-Golden_Temple_India.jpg";
+
 type LoopMode = 'off' | 'all' | 'one';
 type PlayerMode = 'live' | 'local' | 'remote';
 
-// --- Helper Component: Scrolling Title (Marquee) ---
+// --- Helper: Scrolling Title ---
 const ScrollingTitle: React.FC<{ text: string, className?: string }> = ({ text, className }) => {
   return (
     <div className="w-full overflow-hidden relative flex justify-center mask-fade group cursor-default">
@@ -37,18 +43,15 @@ const ScrollingTitle: React.FC<{ text: string, className?: string }> = ({ text, 
         .animate-marquee {
           display: flex;
           width: fit-content;
-          /* Slower speed for readability */
           animation: marquee 25s linear infinite;
         }
-        /* Pause on hover so user can read */
         .group:hover .animate-marquee {
           animation-play-state: paused;
         }
       `}</style>
-      
       <div className={`animate-marquee whitespace-nowrap gap-12 px-4 ${className}`}>
          <span>{text}</span>
-         <span aria-hidden="true">{text}</span> {/* Duplicate for loop */}
+         <span aria-hidden="true">{text}</span>
       </div>
     </div>
   );
@@ -57,24 +60,20 @@ const ScrollingTitle: React.FC<{ text: string, className?: string }> = ({ text, 
 const AudioPlayer: React.FC = () => {
   const { theme } = useTheme();
 
-  // --- Refs ---
   const audioRef = useRef<HTMLAudioElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
   
-  // --- State ---
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [status, setStatus] = useState<ConnectionStatus>(ConnectionStatus.DISCONNECTED);
   const [activeMode, setActiveMode] = useState<PlayerMode>('live');
 
-  // --- Playlist State ---
   const [localRecordings, setLocalRecordings] = useState<FileInfo[]>([]);
   const [remotePlaylist, setRemotePlaylist] = useState<DirectoryEntry[]>([]);
   const [currentIndex, setCurrentIndex] = useState<number>(-1);
   const [currentTrackUrl, setCurrentTrackUrl] = useState<string | null>(null);
   const [currentTrackTitle, setCurrentTrackTitle] = useState<string>("");
 
-  // --- Playback State ---
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [progress, setProgress] = useState(0); 
@@ -83,22 +82,21 @@ const AudioPlayer: React.FC = () => {
   const [isDragging, setIsDragging] = useState(false);
   const [isLiked, setIsLiked] = useState(false);
   
-  // --- Recording State ---
   const [isRecording, setIsRecording] = useState(false); 
   const [recordingDuration, setRecordingDuration] = useState(0);
   
-  // --- Save Prompt State ---
   const [showSavePrompt, setShowSavePrompt] = useState(false);
   const [pendingBlob, setPendingBlob] = useState<Blob | null>(null);
   const [saveName, setSaveName] = useState('');
 
-  // --- UI Overlays ---
+  const [currentImage, setCurrentImage] = useState(localImages.length > 0 ? localImages[0] : FALLBACK_IMAGE);
+  const [fadeKey, setFadeKey] = useState(0);
+
   const [showRecordingsList, setShowRecordingsList] = useState(false);
   const [showExplorer, setShowExplorer] = useState(false);
   const [showFavorites, setShowFavorites] = useState(false);
   const [sleepTimer, setSleepTimer] = useState<number | null>(null);
 
-  // --- Init ---
   useEffect(() => {
     loadLocalRecordings();
     window.addEventListener('online', () => setIsOnline(true));
@@ -106,6 +104,27 @@ const AudioPlayer: React.FC = () => {
   }, []);
 
   useEffect(() => { checkIfLiked(); }, [currentTrackUrl, activeMode]);
+
+  // --- Auto Slideshow ---
+  useEffect(() => {
+      if (localImages.length <= 1) return;
+
+      const interval = setInterval(() => {
+          const randomIndex = Math.floor(Math.random() * localImages.length);
+          setCurrentImage(localImages[randomIndex]);
+          setFadeKey(prev => prev + 1);
+      }, 10000);
+
+      return () => clearInterval(interval);
+  }, []);
+
+  // --- MANUAL IMAGE CHANGE (NEW) ---
+  const changeImageManually = () => {
+      if (localImages.length === 0) return;
+      const randomIndex = Math.floor(Math.random() * localImages.length);
+      setCurrentImage(localImages[randomIndex]);
+      setFadeKey(prev => prev + 1);
+  };
 
   const loadLocalRecordings = async () => {
     try {
@@ -203,12 +222,12 @@ const AudioPlayer: React.FC = () => {
       setIsLoading(true); 
       try {
           const filename = `cache_${name.replace(/[^a-z0-9]/gi, '_')}`;
-          await Filesystem.downloadFile({ path: filename, directory: Directory.Cache, url: url });
+          await Filesystem.downloadFile({ path: filename, directory: Directory.Cache, url });
           const uri = await Filesystem.getUri({ path: filename, directory: Directory.Cache });
           const localUrl = Capacitor.convertFileSrc(uri.uri);
           if(audioRef.current) { audioRef.current.crossOrigin = null; setCurrentTrackUrl(localUrl); }
       } catch (err) {
-          console.error("Cache failed, fallback", err);
+          console.error("Cache failed", err);
           if(audioRef.current) { audioRef.current.crossOrigin = "anonymous"; setCurrentTrackUrl(url); }
           Toast.show({ text: 'Buffering failed. Recording disabled.', duration: 'long' });
       } finally { setIsLoading(false); }
@@ -263,34 +282,66 @@ const AudioPlayer: React.FC = () => {
   };
 
   const handleDiscardSave = () => { setPendingBlob(null); setShowSavePrompt(false); Toast.show({ text: 'Recording Discarded', duration: 'short' }); };
-  useEffect(() => { let interval: any; if(isRecording) interval = setInterval(() => setRecordingDuration(s => s+1), 1000); return () => clearInterval(interval); }, [isRecording]);
+
+  useEffect(() => { 
+      let interval: any; 
+      if(isRecording) interval = setInterval(() => setRecordingDuration(s => s+1), 1000); 
+      return () => clearInterval(interval); 
+  }, [isRecording]);
 
   const formatTime = (s: number) => { if(!Number.isFinite(s)) return "00:00"; const m=Math.floor(s/60), sec=Math.floor(s%60); return `${m}:${sec.toString().padStart(2,'0')}`; };
+
   const togglePlay = () => audioRef.current?.paused ? audioRef.current?.play() : audioRef.current?.pause();
-  const handleNext = () => { if (activeMode === 'live') return; let next = currentIndex + 1; if (activeMode === 'local' && next >= localRecordings.length) next = 0; else if (activeMode === 'remote' && next >= remotePlaylist.length) next = 0; activeMode === 'local' ? playLocalFile(next) : playRemoteTrack(remotePlaylist[next].url, remotePlaylist[next].name, remotePlaylist); };
-  const handlePrev = () => { if (activeMode === 'live') return; let prev = currentIndex - 1; if (activeMode === 'local' && prev < 0) prev = localRecordings.length - 1; else if (activeMode === 'remote' && prev < 0) prev = remotePlaylist.length - 1; activeMode === 'local' ? playLocalFile(prev) : playRemoteTrack(remotePlaylist[prev].url, remotePlaylist[prev].name, remotePlaylist); };
+
+  const handleNext = () => { 
+    if (activeMode === 'live') return; 
+    let next = currentIndex + 1; 
+    if (activeMode === 'local' && next >= localRecordings.length) next = 0; 
+    else if (activeMode === 'remote' && next >= remotePlaylist.length) next = 0; 
+    activeMode === 'local' ? playLocalFile(next) : playRemoteTrack(remotePlaylist[next].url, remotePlaylist[next].name, remotePlaylist); 
+  };
+
+  const handlePrev = () => { 
+    if (activeMode === 'live') return; 
+    let prev = currentIndex - 1; 
+    if (activeMode === 'local' && prev < 0) prev = localRecordings.length - 1; 
+    else if (activeMode === 'remote' && prev < 0) prev = remotePlaylist.length - 1; 
+    activeMode === 'local' ? playLocalFile(prev) : playRemoteTrack(remotePlaylist[prev].url, remotePlaylist[prev].name, remotePlaylist); 
+  };
 
   useEffect(() => {
     const audio = audioRef.current; if(!audio) return;
     const onTimeUpdate = () => { if(!isDragging) setProgress(audio.currentTime); if(Number.isFinite(audio.duration)) setDuration(audio.duration); };
     const onEnded = () => { if (loopMode === 'one') { audio.currentTime = 0; audio.play(); } else if (loopMode === 'all') handleNext(); else setIsPlaying(false); };
-    const onPlay = () => setIsPlaying(true); const onPause = () => setIsPlaying(false);
-    audio.addEventListener('timeupdate', onTimeUpdate); audio.addEventListener('ended', onEnded); audio.addEventListener('play', onPlay); audio.addEventListener('pause', onPause);
-    return () => { audio.removeEventListener('timeupdate', onTimeUpdate); audio.removeEventListener('ended', onEnded); audio.removeEventListener('play', onPlay); audio.removeEventListener('pause', onPause); };
+    const onPlay = () => setIsPlaying(true); 
+    const onPause = () => setIsPlaying(false);
+
+    audio.addEventListener('timeupdate', onTimeUpdate);
+    audio.addEventListener('ended', onEnded);
+    audio.addEventListener('play', onPlay);
+    audio.addEventListener('pause', onPause);
+
+    return () => { 
+        audio.removeEventListener('timeupdate', onTimeUpdate); 
+        audio.removeEventListener('ended', onEnded); 
+        audio.removeEventListener('play', onPlay); 
+        audio.removeEventListener('pause', onPause); 
+    };
   }, [activeMode, currentTrackUrl, loopMode, currentIndex]);
 
   useEffect(() => {
       if (activeMode === 'live' && audioRef.current && audioRef.current.src !== STREAM_URL) { 
           audioRef.current.crossOrigin = "anonymous"; audioRef.current.src = STREAM_URL; audioRef.current.load(); 
       } else if (activeMode !== 'live' && currentTrackUrl && audioRef.current && audioRef.current.src !== currentTrackUrl) {
-          audioRef.current.src = currentTrackUrl; audioRef.current.load(); audioRef.current.play().catch(console.error);
+          audioRef.current.src = currentTrackUrl; 
+          audioRef.current.load(); 
+          audioRef.current.play().catch(console.error);
       }
   }, [activeMode, currentTrackUrl]);
 
   return (
     <div className={`w-full max-w-md mx-auto backdrop-blur-xl border rounded-3xl p-6 shadow-2xl relative overflow-hidden min-h-[500px] flex flex-col justify-between transition-colors duration-300 ${theme.colors.cardBg} ${theme.colors.cardBorder}`}>
       
-      {/* --- SAVE PROMPT MODAL --- */}
       {showSavePrompt && (
         <div className="absolute inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
             <div className={`border rounded-2xl p-6 w-full max-w-sm shadow-2xl space-y-4 ${theme.colors.cardBg} ${theme.colors.cardBorder}`}>
@@ -311,32 +362,17 @@ const AudioPlayer: React.FC = () => {
       )}
 
       {showFavorites && <FavoritesList onClose={() => setShowFavorites(false)} onPlay={playFavorite} />}
-      
-      {/* FIXED: Passing filename string now, not full URL */}
-      {showRecordingsList && (
-        <RecordingsList 
-            onClose={() => setShowRecordingsList(false)} 
-            onPlayRecording={(fileName) => { 
-                const idx = localRecordings.findIndex(f => f.name === fileName); // Strict match
-                playLocalFile(idx >= 0 ? idx : 0); 
-                setShowRecordingsList(false); 
-            }} 
-            currentPlayingUrl={currentTrackUrl} 
-            isPlayerPaused={!isPlaying} 
-            onFilesChanged={loadLocalRecordings} 
-        />
-      )}
-      
+      {showRecordingsList && <RecordingsList onClose={() => setShowRecordingsList(false)} onPlayRecording={(url) => { const idx = localRecordings.findIndex(f => url.includes(f.name)); playLocalFile(idx >= 0 ? idx : 0); setShowRecordingsList(false); }} currentPlayingUrl={currentTrackUrl} isPlayerPaused={!isPlaying} />}
       {showExplorer && <KirtanExplorer onClose={() => setShowExplorer(false)} onPlayTrack={playRemoteTrack} />}
 
-      {/* --- BACKGROUND --- */}
+      {/* Colorful Blur */}
       <div className={`absolute top-0 left-1/2 -translate-x-1/2 w-48 h-48 blur-[60px] rounded-full pointer-events-none transition-colors duration-500 
         ${isRecording ? 'bg-red-500/20' : activeMode === 'live' ? 'bg-amber-500/10' : 'bg-blue-500/20'}`} 
       />
 
       <div className="relative z-10 flex flex-col items-center w-full">
         
-        {/* --- HEADER --- */}
+        {/* Header */}
         <div className="w-full flex justify-between items-center mb-6">
             <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium border
                 ${activeMode === 'live' ? 'bg-green-500/10 text-green-600 border-green-500/20' : 
@@ -357,16 +393,33 @@ const AudioPlayer: React.FC = () => {
             </div>
         </div>
 
-        {/* --- ARTWORK --- */}
-        <div className="w-full h-32 flex items-center justify-center mb-4">
-             {isLoading ? (
-                 <div className={`flex flex-col items-center gap-2 ${theme.colors.accent}`}><Loader2 className="w-8 h-8 animate-spin" /><span className="text-xs">Buffering...</span></div>
-             ) : (
-                 <WaveVisualizer isPlaying={isPlaying} />
-             )}
+        {/* --- ARTWORK & SLIDESHOW (UPDATED) --- */}
+        <div className="w-full h-72 flex flex-col items-center justify-center mb-4 relative">
+             
+             <div className={`relative w-56 h-56 rounded-3xl overflow-hidden shadow-2xl transition-all duration-1000 
+                ${isPlaying ? 'shadow-[0_0_40px_rgba(251,191,36,0.3)] scale-105' : 'shadow-none scale-100'}
+             `}>
+                 <img 
+                    key={fadeKey}
+                    src={currentImage}
+                    alt="Darbar Sahib"
+                    onClick={changeImageManually}
+                    className="w-full h-full object-cover animate-in fade-in duration-1000 cursor-pointer active:scale-95 transition-all"
+                 />
+                 <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent"></div>
+             </div>
+
+             <div className="absolute -bottom-4 w-full flex justify-center z-10">
+                 {isLoading && (
+                     <div className={`flex flex-col items-center gap-2 ${theme.colors.accent} bg-black/50 px-4 py-1 rounded-full backdrop-blur-md`}>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span className="text-[10px] font-bold tracking-wider">LOADING...</span>
+                     </div>
+                 )}
+             </div>
         </div>
 
-        {/* --- TITLE & LIKE --- */}
+        {/* Track Title */}
         <div className="w-full flex items-center gap-4 mb-6 px-4">
             <div className="flex-1 min-w-0">
                 <ScrollingTitle 
@@ -382,27 +435,37 @@ const AudioPlayer: React.FC = () => {
             </button>
         </div>
 
-        {/* --- SEEK BAR --- */}
+        {/* Progress Bar */}
         <div className="w-full px-2 mb-6">
             <div className={`flex justify-between text-[10px] font-medium mb-2 ${theme.colors.textSub}`}>
                 <span className={activeMode === 'live' ? 'text-red-500 font-bold animate-pulse' : ''}>{activeMode === 'live' ? 'LIVE' : formatTime(progress)}</span>
                 <span>{activeMode === 'live' ? 'BROADCAST' : formatTime(duration)}</span>
             </div>
+
             <div className="relative h-6 flex items-center">
                 <input 
                     type="range" min="0" max={activeMode === 'live' ? 100 : (duration || 100)} 
                     value={activeMode === 'live' ? 100 : progress}
                     disabled={activeMode === 'live'}
                     onChange={(e) => { const t = parseFloat(e.target.value); setProgress(t); if(audioRef.current) audioRef.current.currentTime = t; }}
-                    onMouseDown={() => setIsDragging(true)} onMouseUp={() => setIsDragging(false)}
-                    onTouchStart={() => setIsDragging(true)} onTouchEnd={() => setIsDragging(false)}
+                    onMouseDown={() => setIsDragging(true)} 
+                    onMouseUp={() => setIsDragging(false)}
+                    onTouchStart={() => setIsDragging(true)} 
+                    onTouchEnd={() => setIsDragging(false)}
                     className={`w-full h-1.5 rounded-full appearance-none ${activeMode === 'live' ? 'cursor-not-allowed [&::-webkit-slider-thumb]:hidden' : `cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:${theme.colors.accentBg}` } ${theme.colors.sliderTrack}`}
                 />
-                <div className={`absolute left-0 h-1.5 rounded-full pointer-events-none transition-all duration-500 ${activeMode === 'live' ? 'bg-red-500 w-full shadow-[0_0_10px_rgba(239,68,68,0.5)]' : `${theme.colors.accentBg} rounded-l-full`}`} style={{ width: activeMode === 'live' ? '100%' : `${(progress/duration)*100}%` }} />
+
+                <div 
+                    className={`absolute left-0 h-1.5 rounded-full pointer-events-none transition-all duration-500 
+                        ${activeMode === 'live' ? 'bg-red-500 w-full shadow-[0_0_10px_rgba(239,68,68,0.5)]' 
+                          : `${theme.colors.accentBg} rounded-l-full`}`
+                    }
+                    style={{ width: activeMode === 'live' ? '100%' : `${(progress/duration)*100}%` }} 
+                />
             </div>
         </div>
 
-        {/* --- CONTROLS --- */}
+        {/* Controls */}
         <div className="flex items-center justify-between w-full px-4">
             {activeMode === 'live' ? (
                  <button onClick={() => { const opts = [null,15,30,60]; setSleepTimer(opts[(opts.indexOf(sleepTimer)+1)%opts.length]); }} className={`flex flex-col items-center gap-1 ${sleepTimer ? theme.colors.accent : theme.colors.textSub}`}>
