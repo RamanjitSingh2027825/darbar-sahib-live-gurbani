@@ -1,4 +1,4 @@
-package com.example.app;
+package com.ramanjitsingh.darbarlive;
 
 import com.getcapacitor.BridgeActivity;
 

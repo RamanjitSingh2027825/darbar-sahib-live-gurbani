@@ -1,12 +1,14 @@
 import { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'com.ramanjitsingh.darbarlive',
+  appId: 'com.darbarsahib.live',
   appName: 'Darbar Sahib Live',
   webDir: 'dist',
-  server: {
-    androidScheme: 'https'
-  }
+  plugins: {
+    CapacitorHttp: {
+      enabled: true,
+    },
+  },
 };
 
 export default config;
