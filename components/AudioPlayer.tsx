@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { 
   Play, Pause, Radio, Loader2, Moon, Mic, Square, 
   ListMusic, SkipBack, SkipForward, Repeat, 
-  Repeat1, WifiOff, Globe, Search, Download, AlertCircle
+  Repeat1, WifiOff, Globe, Search, Download, X
 } from 'lucide-react';
 import { STREAM_URL } from '../constants';
 import { ConnectionStatus } from '../types';
@@ -39,7 +39,7 @@ const AudioPlayer: React.FC = () => {
 
   // --- Playback State ---
   const [isPlaying, setIsPlaying] = useState(false);
-  const [isLoading, setIsLoading] = useState(false); // For buffering/downloading
+  const [isLoading, setIsLoading] = useState(false);
   const [progress, setProgress] = useState(0); 
   const [duration, setDuration] = useState(0);
   const [loopMode, setLoopMode] = useState<LoopMode>('off');
@@ -49,6 +49,11 @@ const AudioPlayer: React.FC = () => {
   const [isRecording, setIsRecording] = useState(false); 
   const [recordingDuration, setRecordingDuration] = useState(0);
   
+  // --- Save Prompt State ---
+  const [showSavePrompt, setShowSavePrompt] = useState(false);
+  const [pendingBlob, setPendingBlob] = useState<Blob | null>(null);
+  const [saveName, setSaveName] = useState('');
+
   // --- UI Overlays ---
   const [showRecordingsList, setShowRecordingsList] = useState(false);
   const [showExplorer, setShowExplorer] = useState(false);
@@ -76,7 +81,7 @@ const AudioPlayer: React.FC = () => {
     
     const audio = audioRef.current;
     if(audio) {
-        audio.crossOrigin = "anonymous"; // Enable Live Recording
+        audio.crossOrigin = "anonymous"; 
         audio.src = STREAM_URL;
         audio.load();
         try { await audio.play(); } catch(e) { setStatus(ConnectionStatus.ERROR); }
@@ -101,7 +106,6 @@ const AudioPlayer: React.FC = () => {
     }
   };
 
-  // --- SMART REMOTE PLAY (Auto-Cache to Enable Recording) ---
   const playRemoteTrack = async (url: string, name: string, playlist: DirectoryEntry[]) => {
       if(isRecording) toggleRecording();
       
@@ -111,40 +115,20 @@ const AudioPlayer: React.FC = () => {
       setCurrentIndex(idx);
       setCurrentTrackTitle(decodeURIComponent(name).replace('.mp3', ''));
       setShowExplorer(false);
-      setIsLoading(true); // Show spinner
+      setIsLoading(true); 
 
       try {
-          // 1. Generate a cache filename
-          // We use the last part of URL or a hash to keep it unique
           const filename = `cache_${name.replace(/[^a-z0-9]/gi, '_')}`;
-          
-          // 2. Check if already cached? (Optional optimization, skipping for simplicity/freshness)
-          // 3. Download to CACHE directory
-          const downloadResult = await Filesystem.downloadFile({
-              path: filename,
-              directory: Directory.Cache,
-              url: url
-          });
-
-          // 4. Get local URI
-          const uri = await Filesystem.getUri({
-              path: filename,
-              directory: Directory.Cache
-          });
-
-          // 5. Convert to Webview-friendly URL
+          await Filesystem.downloadFile({ path: filename, directory: Directory.Cache, url: url });
+          const uri = await Filesystem.getUri({ path: filename, directory: Directory.Cache });
           const localUrl = Capacitor.convertFileSrc(uri.uri);
 
-          // 6. Play Local Version (Allows Recording!)
           if(audioRef.current) {
-              // No crossOrigin needed for local files
               audioRef.current.crossOrigin = null; 
               setCurrentTrackUrl(localUrl);
           }
-
       } catch (err) {
-          console.error("Cache failed, falling back to stream (No Recording)", err);
-          // Fallback: Stream directly (Recording will be disabled by browser security)
+          console.error("Cache failed, fallback stream", err);
           if(audioRef.current) {
               audioRef.current.crossOrigin = "anonymous";
               setCurrentTrackUrl(url);
@@ -155,13 +139,13 @@ const AudioPlayer: React.FC = () => {
       }
   };
 
-  // --- Recording Logic (Subpart Capture) ---
+  // --- Recording Logic ---
   const toggleRecording = async () => {
     if (isRecording) {
-        // Stop
+        // STOP
         if (mediaRecorderRef.current) mediaRecorderRef.current.stop();
     } else {
-        // Start
+        // START
         if (!isPlaying) { alert("Play audio first"); return; }
         if (activeMode === 'local') { alert("Cannot re-record a saved file."); return; }
         
@@ -169,43 +153,73 @@ const AudioPlayer: React.FC = () => {
         // @ts-ignore
         const stream = audio.captureStream ? audio.captureStream() : audio.mozCaptureStream ? audio.mozCaptureStream() : null;
         
-        if (!stream) { 
-            alert("Recording Error: Stream is protected or not loaded."); 
-            return; 
-        }
+        if (!stream) { alert("Recording Error: Stream is protected."); return; }
 
-        try {
-            const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
-            mediaRecorderRef.current = mediaRecorder;
-            chunksRef.current = [];
+        const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+        mediaRecorderRef.current = mediaRecorder;
+        chunksRef.current = [];
+        
+        mediaRecorder.ondataavailable = (e) => { if(e.data.size>0) chunksRef.current.push(e.data); };
+        
+        mediaRecorder.onstop = () => {
+            if(chunksRef.current.length === 0) { setIsRecording(false); return; }
             
-            mediaRecorder.ondataavailable = (e) => { if(e.data.size>0) chunksRef.current.push(e.data); };
+            const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
             
-            mediaRecorder.onstop = async () => {
-                if(chunksRef.current.length === 0) { setIsRecording(false); return; }
-                const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
-                
-                const prefix = activeMode === 'live' ? 'Live' : 'Clip';
-                const fileName = `Darbar_${prefix}_${new Date().toISOString().slice(0,19).replace(/[:.]/g,'-')}.webm`;
-                
-                const reader = new FileReader();
-                reader.onloadend = async () => {
-                    await Filesystem.writeFile({ path: fileName, data: (reader.result as string).split(',')[1], directory: Directory.Documents });
-                    Toast.show({ text: 'Clip Saved!', duration: 'short' });
-                    loadLocalRecordings();
-                };
-                reader.readAsDataURL(blob);
-                setIsRecording(false);
-                setRecordingDuration(0);
-            };
+            // Prepare Default Name
+            const prefix = activeMode === 'live' ? 'Live' : 'Clip';
+            const timestamp = new Date().toISOString().slice(0,16).replace(/[:T]/g,'-');
+            const suggestion = `Darbar_${prefix}_${timestamp}`;
             
-            mediaRecorder.start(1000);
-            setIsRecording(true);
-        } catch (e) {
-            console.error(e);
-            alert("Recording Failed. Security restrictions applied.");
-        }
+            // Open Save Prompt
+            setPendingBlob(blob);
+            setSaveName(suggestion);
+            setShowSavePrompt(true);
+            
+            setIsRecording(false);
+            setRecordingDuration(0);
+        };
+        
+        mediaRecorder.start(1000);
+        setIsRecording(true);
     }
+  };
+
+  // --- Confirm Save Logic ---
+  const handleConfirmSave = async () => {
+      if (!pendingBlob || !saveName.trim()) return;
+      
+      let fileName = saveName.trim();
+      // Ensure .webm extension
+      if (!fileName.toLowerCase().endsWith('.webm')) fileName += '.webm';
+
+      try {
+          const reader = new FileReader();
+          reader.onloadend = async () => {
+              const base64 = (reader.result as string).split(',')[1];
+              await Filesystem.writeFile({
+                  path: fileName,
+                  data: base64,
+                  directory: Directory.Documents
+              });
+              Toast.show({ text: 'Saved Successfully!', duration: 'short' });
+              loadLocalRecordings();
+              
+              // Cleanup
+              setPendingBlob(null);
+              setShowSavePrompt(false);
+          };
+          reader.readAsDataURL(pendingBlob);
+      } catch (e) {
+          console.error(e);
+          alert("Failed to save file.");
+      }
+  };
+
+  const handleDiscardSave = () => {
+      setPendingBlob(null);
+      setShowSavePrompt(false);
+      Toast.show({ text: 'Recording Discarded', duration: 'short' });
   };
   
   // Timer
@@ -263,7 +277,7 @@ const AudioPlayer: React.FC = () => {
      return `${m}:${sec.toString().padStart(2,'0')}`;
   };
 
-  // --- Controls Helpers ---
+  // --- Controls ---
   const togglePlay = () => audioRef.current?.paused ? audioRef.current?.play() : audioRef.current?.pause();
   
   const handleNext = () => {
@@ -295,6 +309,42 @@ const AudioPlayer: React.FC = () => {
   return (
     <div className="w-full max-w-md mx-auto bg-slate-900/80 backdrop-blur-xl border border-slate-800 rounded-3xl p-6 shadow-2xl relative overflow-hidden min-h-[500px] flex flex-col justify-between">
       
+      {/* --- SAVE PROMPT MODAL --- */}
+      {showSavePrompt && (
+        <div className="absolute inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+            <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-sm shadow-2xl space-y-4">
+                <div className="flex justify-between items-center">
+                    <h3 className="text-lg font-bold text-white">Save Recording</h3>
+                    <button onClick={handleDiscardSave} className="text-slate-500 hover:text-white"><X className="w-5 h-5"/></button>
+                </div>
+                <div>
+                    <label className="text-xs text-slate-400 ml-1 uppercase font-bold tracking-wider">File Name</label>
+                    <input 
+                        type="text" 
+                        value={saveName}
+                        onChange={(e) => setSaveName(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-4 py-3 text-slate-200 focus:border-amber-500 outline-none mt-1"
+                        autoFocus
+                    />
+                </div>
+                <div className="flex gap-3 pt-2">
+                    <button 
+                        onClick={handleDiscardSave}
+                        className="flex-1 py-3 rounded-xl bg-slate-800 text-slate-400 font-medium hover:bg-slate-700 hover:text-white transition-colors"
+                    >
+                        Discard
+                    </button>
+                    <button 
+                        onClick={handleConfirmSave}
+                        className="flex-1 py-3 rounded-xl bg-amber-500 text-slate-900 font-bold hover:bg-amber-400 transition-colors"
+                    >
+                        Save
+                    </button>
+                </div>
+            </div>
+        </div>
+      )}
+
       {/* --- OVERLAYS --- */}
       {showRecordingsList && (
         <RecordingsList 
@@ -332,13 +382,11 @@ const AudioPlayer: React.FC = () => {
             </div>
 
             <div className="flex gap-2">
-                {/* Back to Live */}
                 {activeMode !== 'live' && (
                     <button onClick={playLive} className="p-2 hover:bg-green-500/10 rounded-full text-slate-400 hover:text-green-400" title="Live Radio">
                         <Globe className="w-5 h-5" />
                     </button>
                 )}
-                
                 <button onClick={() => setShowExplorer(true)} className="p-2 hover:bg-slate-800 rounded-full"><Search className="w-5 h-5 text-slate-400" /></button>
                 <button onClick={() => setShowRecordingsList(true)} className="p-2 hover:bg-slate-800 rounded-full"><ListMusic className="w-5 h-5 text-slate-400" /></button>
             </div>
@@ -412,7 +460,6 @@ const AudioPlayer: React.FC = () => {
 
             {activeMode !== 'live' && <button onClick={handleNext} className="p-2 text-slate-300"><SkipForward className="w-8 h-8 fill-current" /></button>}
 
-            {/* REC Button - Enabled for Live AND Remote (Subpart) */}
             <button 
                 onClick={toggleRecording} 
                 disabled={activeMode === 'local' || isLoading}
@@ -428,7 +475,6 @@ const AudioPlayer: React.FC = () => {
       <audio 
         ref={audioRef} 
         playsInline 
-        // Note: crossOrigin is set dynamically in play functions
         onError={(e) => { console.error("Audio Error", e); setStatus(ConnectionStatus.ERROR); }}
       />
     </div>
