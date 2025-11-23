@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { STREAM_URL } from '../constants';
 import { ConnectionStatus } from '../types';
+import WaveVisualizer from './WaveVisualizer';
 import RecordingsList from './RecordingsList';
 import KirtanExplorer from './KirtanExplorer';
 import FavoritesList, { FavoriteItem } from './FavoritesList';
@@ -48,6 +49,14 @@ const ScrollingTitle: React.FC<{ text: string, className?: string }> = ({ text, 
         .group:hover .animate-marquee {
           animation-play-state: paused;
         }
+        @keyframes ripple {
+          0% { transform: scale(0.5); opacity: 0; }
+          50% { transform: scale(1.2); opacity: 1; }
+          100% { transform: scale(1); opacity: 0; }
+        }
+        .animate-ripple {
+          animation: ripple 0.6s ease-out forwards;
+        }
       `}</style>
       <div className={`animate-marquee whitespace-nowrap gap-12 px-4 ${className}`}>
          <span>{text}</span>
@@ -89,13 +98,25 @@ const AudioPlayer: React.FC = () => {
   const [pendingBlob, setPendingBlob] = useState<Blob | null>(null);
   const [saveName, setSaveName] = useState('');
 
+  // --- Slideshow State ---
+  const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [currentImage, setCurrentImage] = useState(localImages.length > 0 ? localImages[0] : FALLBACK_IMAGE);
   const [fadeKey, setFadeKey] = useState(0);
+  
+  // NEW: Slideshow Control States
+  const [isSlideshowPaused, setIsSlideshowPaused] = useState(false);
+  const [slideshowFeedback, setSlideshowFeedback] = useState<'play' | 'pause' | null>(null);
+  const lastTapRef = useRef<number>(0);
+  const singleTapTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const [showRecordingsList, setShowRecordingsList] = useState(false);
   const [showExplorer, setShowExplorer] = useState(false);
   const [showFavorites, setShowFavorites] = useState(false);
   const [sleepTimer, setSleepTimer] = useState<number | null>(null);
+
+  // --- Swipe Refs ---
+  const touchStartX = useRef(0);
+  const minSwipeDistance = 50; 
 
   useEffect(() => {
     loadLocalRecordings();
@@ -107,23 +128,76 @@ const AudioPlayer: React.FC = () => {
 
   // --- Auto Slideshow ---
   useEffect(() => {
-      if (localImages.length <= 1) return;
+      if (localImages.length <= 1 || isSlideshowPaused) return; // PAUSE CHECK
 
       const interval = setInterval(() => {
-          const randomIndex = Math.floor(Math.random() * localImages.length);
-          setCurrentImage(localImages[randomIndex]);
-          setFadeKey(prev => prev + 1);
-      }, 10000);
+          changeImage('next');
+      }, 10000); 
 
       return () => clearInterval(interval);
-  }, []);
+  }, [currentImageIndex, isSlideshowPaused]); // Re-run if paused state changes
 
-  // --- MANUAL IMAGE CHANGE (NEW) ---
-  const changeImageManually = () => {
+  // --- Image Change Logic ---
+  const changeImage = (direction: 'next' | 'prev') => {
       if (localImages.length === 0) return;
-      const randomIndex = Math.floor(Math.random() * localImages.length);
-      setCurrentImage(localImages[randomIndex]);
+      
+      let newIndex = currentImageIndex;
+      if (direction === 'next') {
+          newIndex = (currentImageIndex + 1) % localImages.length;
+      } else {
+          newIndex = (currentImageIndex - 1 + localImages.length) % localImages.length;
+      }
+
+      setCurrentImageIndex(newIndex);
+      setCurrentImage(localImages[newIndex]);
       setFadeKey(prev => prev + 1);
+  };
+
+  // --- Swipe Handlers ---
+  const handleTouchStart = (e: React.TouchEvent) => {
+      touchStartX.current = e.targetTouches[0].clientX;
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+      if (!touchStartX.current) return;
+      const touchEndX = e.changedTouches[0].clientX;
+      const distance = touchStartX.current - touchEndX;
+      
+      if (distance > minSwipeDistance) {
+          changeImage('next');
+      } else if (distance < -minSwipeDistance) {
+          changeImage('prev');
+      }
+      touchStartX.current = 0;
+  };
+
+  // --- Tap Handler (Single vs Double) ---
+  const handleImageTap = (e: React.MouseEvent) => {
+      // Prevent click if user was swiping (basic check)
+      // Ideally logic handles this, but simple timestamp diff works
+      
+      const now = Date.now();
+      const DOUBLE_TAP_DELAY = 300;
+
+      if (now - lastTapRef.current < DOUBLE_TAP_DELAY) {
+          // === DOUBLE TAP DETECTED ===
+          if (singleTapTimeoutRef.current) clearTimeout(singleTapTimeoutRef.current);
+          
+          const newPausedState = !isSlideshowPaused;
+          setIsSlideshowPaused(newPausedState);
+          
+          // Show Visual Feedback (Ripple Icon)
+          setSlideshowFeedback(newPausedState ? 'pause' : 'play');
+          setTimeout(() => setSlideshowFeedback(null), 800); // Hide after animation
+          
+      } else {
+          // === SINGLE TAP (Wait to confirm) ===
+          singleTapTimeoutRef.current = setTimeout(() => {
+              changeImage('next');
+          }, DOUBLE_TAP_DELAY);
+      }
+      
+      lastTapRef.current = now;
   };
 
   const loadLocalRecordings = async () => {
@@ -222,7 +296,7 @@ const AudioPlayer: React.FC = () => {
       setIsLoading(true); 
       try {
           const filename = `cache_${name.replace(/[^a-z0-9]/gi, '_')}`;
-          await Filesystem.downloadFile({ path: filename, directory: Directory.Cache, url });
+          await Filesystem.downloadFile({ path: filename, directory: Directory.Cache, url: url });
           const uri = await Filesystem.getUri({ path: filename, directory: Directory.Cache });
           const localUrl = Capacitor.convertFileSrc(uri.uri);
           if(audioRef.current) { audioRef.current.crossOrigin = null; setCurrentTrackUrl(localUrl); }
@@ -282,66 +356,34 @@ const AudioPlayer: React.FC = () => {
   };
 
   const handleDiscardSave = () => { setPendingBlob(null); setShowSavePrompt(false); Toast.show({ text: 'Recording Discarded', duration: 'short' }); };
-
-  useEffect(() => { 
-      let interval: any; 
-      if(isRecording) interval = setInterval(() => setRecordingDuration(s => s+1), 1000); 
-      return () => clearInterval(interval); 
-  }, [isRecording]);
+  useEffect(() => { let interval: any; if(isRecording) interval = setInterval(() => setRecordingDuration(s => s+1), 1000); return () => clearInterval(interval); }, [isRecording]);
 
   const formatTime = (s: number) => { if(!Number.isFinite(s)) return "00:00"; const m=Math.floor(s/60), sec=Math.floor(s%60); return `${m}:${sec.toString().padStart(2,'0')}`; };
-
   const togglePlay = () => audioRef.current?.paused ? audioRef.current?.play() : audioRef.current?.pause();
-
-  const handleNext = () => { 
-    if (activeMode === 'live') return; 
-    let next = currentIndex + 1; 
-    if (activeMode === 'local' && next >= localRecordings.length) next = 0; 
-    else if (activeMode === 'remote' && next >= remotePlaylist.length) next = 0; 
-    activeMode === 'local' ? playLocalFile(next) : playRemoteTrack(remotePlaylist[next].url, remotePlaylist[next].name, remotePlaylist); 
-  };
-
-  const handlePrev = () => { 
-    if (activeMode === 'live') return; 
-    let prev = currentIndex - 1; 
-    if (activeMode === 'local' && prev < 0) prev = localRecordings.length - 1; 
-    else if (activeMode === 'remote' && prev < 0) prev = remotePlaylist.length - 1; 
-    activeMode === 'local' ? playLocalFile(prev) : playRemoteTrack(remotePlaylist[prev].url, remotePlaylist[prev].name, remotePlaylist); 
-  };
+  const handleNext = () => { if (activeMode === 'live') return; let next = currentIndex + 1; if (activeMode === 'local' && next >= localRecordings.length) next = 0; else if (activeMode === 'remote' && next >= remotePlaylist.length) next = 0; activeMode === 'local' ? playLocalFile(next) : playRemoteTrack(remotePlaylist[next].url, remotePlaylist[next].name, remotePlaylist); };
+  const handlePrev = () => { if (activeMode === 'live') return; let prev = currentIndex - 1; if (activeMode === 'local' && prev < 0) prev = localRecordings.length - 1; else if (activeMode === 'remote' && prev < 0) prev = remotePlaylist.length - 1; activeMode === 'local' ? playLocalFile(prev) : playRemoteTrack(remotePlaylist[prev].url, remotePlaylist[prev].name, remotePlaylist); };
 
   useEffect(() => {
     const audio = audioRef.current; if(!audio) return;
     const onTimeUpdate = () => { if(!isDragging) setProgress(audio.currentTime); if(Number.isFinite(audio.duration)) setDuration(audio.duration); };
     const onEnded = () => { if (loopMode === 'one') { audio.currentTime = 0; audio.play(); } else if (loopMode === 'all') handleNext(); else setIsPlaying(false); };
-    const onPlay = () => setIsPlaying(true); 
-    const onPause = () => setIsPlaying(false);
-
-    audio.addEventListener('timeupdate', onTimeUpdate);
-    audio.addEventListener('ended', onEnded);
-    audio.addEventListener('play', onPlay);
-    audio.addEventListener('pause', onPause);
-
-    return () => { 
-        audio.removeEventListener('timeupdate', onTimeUpdate); 
-        audio.removeEventListener('ended', onEnded); 
-        audio.removeEventListener('play', onPlay); 
-        audio.removeEventListener('pause', onPause); 
-    };
+    const onPlay = () => setIsPlaying(true); const onPause = () => setIsPlaying(false);
+    audio.addEventListener('timeupdate', onTimeUpdate); audio.addEventListener('ended', onEnded); audio.addEventListener('play', onPlay); audio.addEventListener('pause', onPause);
+    return () => { audio.removeEventListener('timeupdate', onTimeUpdate); audio.removeEventListener('ended', onEnded); audio.removeEventListener('play', onPlay); audio.removeEventListener('pause', onPause); };
   }, [activeMode, currentTrackUrl, loopMode, currentIndex]);
 
   useEffect(() => {
       if (activeMode === 'live' && audioRef.current && audioRef.current.src !== STREAM_URL) { 
           audioRef.current.crossOrigin = "anonymous"; audioRef.current.src = STREAM_URL; audioRef.current.load(); 
       } else if (activeMode !== 'live' && currentTrackUrl && audioRef.current && audioRef.current.src !== currentTrackUrl) {
-          audioRef.current.src = currentTrackUrl; 
-          audioRef.current.load(); 
-          audioRef.current.play().catch(console.error);
+          audioRef.current.src = currentTrackUrl; audioRef.current.load(); audioRef.current.play().catch(console.error);
       }
   }, [activeMode, currentTrackUrl]);
 
   return (
     <div className={`w-full max-w-md mx-auto backdrop-blur-xl border rounded-3xl p-6 shadow-2xl relative overflow-hidden min-h-[500px] flex flex-col justify-between transition-colors duration-300 ${theme.colors.cardBg} ${theme.colors.cardBorder}`}>
       
+      {/* --- OVERLAYS --- */}
       {showSavePrompt && (
         <div className="absolute inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
             <div className={`border rounded-2xl p-6 w-full max-w-sm shadow-2xl space-y-4 ${theme.colors.cardBg} ${theme.colors.cardBorder}`}>
@@ -365,14 +407,13 @@ const AudioPlayer: React.FC = () => {
       {showRecordingsList && <RecordingsList onClose={() => setShowRecordingsList(false)} onPlayRecording={(url) => { const idx = localRecordings.findIndex(f => url.includes(f.name)); playLocalFile(idx >= 0 ? idx : 0); setShowRecordingsList(false); }} currentPlayingUrl={currentTrackUrl} isPlayerPaused={!isPlaying} />}
       {showExplorer && <KirtanExplorer onClose={() => setShowExplorer(false)} onPlayTrack={playRemoteTrack} />}
 
-      {/* Colorful Blur */}
       <div className={`absolute top-0 left-1/2 -translate-x-1/2 w-48 h-48 blur-[60px] rounded-full pointer-events-none transition-colors duration-500 
         ${isRecording ? 'bg-red-500/20' : activeMode === 'live' ? 'bg-amber-500/10' : 'bg-blue-500/20'}`} 
       />
 
       <div className="relative z-10 flex flex-col items-center w-full">
         
-        {/* Header */}
+        {/* --- HEADER --- */}
         <div className="w-full flex justify-between items-center mb-6">
             <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium border
                 ${activeMode === 'live' ? 'bg-green-500/10 text-green-600 border-green-500/20' : 
@@ -393,20 +434,46 @@ const AudioPlayer: React.FC = () => {
             </div>
         </div>
 
-        {/* --- ARTWORK & SLIDESHOW (UPDATED) --- */}
+        {/* --- ARTWORK & SLIDESHOW (Interactive) --- */}
         <div className="w-full h-72 flex flex-col items-center justify-center mb-4 relative">
              
-             <div className={`relative w-56 h-56 rounded-3xl overflow-hidden shadow-2xl transition-all duration-1000 
-                ${isPlaying ? 'shadow-[0_0_40px_rgba(251,191,36,0.3)] scale-105' : 'shadow-none scale-100'}
-             `}>
+             <div 
+                className={`relative w-56 h-56 rounded-3xl overflow-hidden shadow-2xl transition-all duration-1000 
+                    ${isPlaying ? 'shadow-[0_0_40px_rgba(251,191,36,0.3)] scale-105' : 'shadow-none scale-100'}
+                `}
+                onTouchStart={handleTouchStart}
+                onTouchEnd={handleTouchEnd}
+                onClick={handleImageTap}
+             >
                  <img 
                     key={fadeKey}
                     src={currentImage}
                     alt="Darbar Sahib"
-                    onClick={changeImageManually}
-                    className="w-full h-full object-cover animate-in fade-in duration-1000 cursor-pointer active:scale-95 transition-all"
+                    className="w-full h-full object-cover animate-in fade-in duration-1000 transition-all"
                  />
-                 <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent"></div>
+                 
+                 {/* Dark Overlay */}
+                 <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent pointer-events-none"></div>
+
+                 {/* FEEDBACK ANIMATION (Play/Pause Icon Ripple) */}
+                 {slideshowFeedback && (
+                     <div className="absolute inset-0 flex items-center justify-center z-20 pointer-events-none">
+                         <div className="bg-black/40 backdrop-blur-md p-4 rounded-full animate-ripple">
+                             {slideshowFeedback === 'pause' ? (
+                                 <Pause className="w-8 h-8 text-white fill-white" />
+                             ) : (
+                                 <Play className="w-8 h-8 text-white fill-white pl-1" />
+                             )}
+                         </div>
+                     </div>
+                 )}
+
+                 {/* Paused Indicator (Persistent Tiny Icon) */}
+                 {isSlideshowPaused && !slideshowFeedback && (
+                     <div className="absolute top-2 right-2 bg-black/40 p-1.5 rounded-full backdrop-blur-sm z-10">
+                         <Pause className="w-3 h-3 text-white/80" />
+                     </div>
+                 )}
              </div>
 
              <div className="absolute -bottom-4 w-full flex justify-center z-10">
@@ -441,27 +508,17 @@ const AudioPlayer: React.FC = () => {
                 <span className={activeMode === 'live' ? 'text-red-500 font-bold animate-pulse' : ''}>{activeMode === 'live' ? 'LIVE' : formatTime(progress)}</span>
                 <span>{activeMode === 'live' ? 'BROADCAST' : formatTime(duration)}</span>
             </div>
-
             <div className="relative h-6 flex items-center">
                 <input 
                     type="range" min="0" max={activeMode === 'live' ? 100 : (duration || 100)} 
                     value={activeMode === 'live' ? 100 : progress}
                     disabled={activeMode === 'live'}
                     onChange={(e) => { const t = parseFloat(e.target.value); setProgress(t); if(audioRef.current) audioRef.current.currentTime = t; }}
-                    onMouseDown={() => setIsDragging(true)} 
-                    onMouseUp={() => setIsDragging(false)}
-                    onTouchStart={() => setIsDragging(true)} 
-                    onTouchEnd={() => setIsDragging(false)}
+                    onMouseDown={() => setIsDragging(true)} onMouseUp={() => setIsDragging(false)}
+                    onTouchStart={() => setIsDragging(true)} onTouchEnd={() => setIsDragging(false)}
                     className={`w-full h-1.5 rounded-full appearance-none ${activeMode === 'live' ? 'cursor-not-allowed [&::-webkit-slider-thumb]:hidden' : `cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:${theme.colors.accentBg}` } ${theme.colors.sliderTrack}`}
                 />
-
-                <div 
-                    className={`absolute left-0 h-1.5 rounded-full pointer-events-none transition-all duration-500 
-                        ${activeMode === 'live' ? 'bg-red-500 w-full shadow-[0_0_10px_rgba(239,68,68,0.5)]' 
-                          : `${theme.colors.accentBg} rounded-l-full`}`
-                    }
-                    style={{ width: activeMode === 'live' ? '100%' : `${(progress/duration)*100}%` }} 
-                />
+                <div className={`absolute left-0 h-1.5 rounded-full pointer-events-none transition-all duration-500 ${activeMode === 'live' ? 'bg-red-500 w-full shadow-[0_0_10px_rgba(239,68,68,0.5)]' : `${theme.colors.accentBg} rounded-l-full`}`} style={{ width: activeMode === 'live' ? '100%' : `${(progress/duration)*100}%` }} />
             </div>
         </div>
 
