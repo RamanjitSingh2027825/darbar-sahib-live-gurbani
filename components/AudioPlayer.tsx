@@ -103,7 +103,7 @@ const AudioPlayer: React.FC = () => {
   const [currentImage, setCurrentImage] = useState(localImages.length > 0 ? localImages[0] : FALLBACK_IMAGE);
   const [fadeKey, setFadeKey] = useState(0);
   
-  // NEW: Slideshow Control States
+  // Slideshow Control States
   const [isSlideshowPaused, setIsSlideshowPaused] = useState(false);
   const [slideshowFeedback, setSlideshowFeedback] = useState<'play' | 'pause' | null>(null);
   const lastTapRef = useRef<number>(0);
@@ -114,40 +114,52 @@ const AudioPlayer: React.FC = () => {
   const [showFavorites, setShowFavorites] = useState(false);
   const [sleepTimer, setSleepTimer] = useState<number | null>(null);
 
+  // Video Status State
+  const [isVideoStatusRecording, setIsVideoStatusRecording] = useState(false);
+  const videoRecorderRef = useRef<MediaRecorder | null>(null);
+
   // --- Swipe Refs ---
   const touchStartX = useRef(0);
   const minSwipeDistance = 50; 
+useEffect(() => {
+  loadLocalRecordings();
+  window.addEventListener('online', () => setIsOnline(true));
+  window.addEventListener('offline', () => setIsOnline(false));
+  
+  // Listen for Video Status Event (with mode from CustomEvent.detail)
+  const statusListener = (e: Event) => {
+    startVideoStatusRecording(e as CustomEvent<any>);
+  };
 
-  useEffect(() => {
-    loadLocalRecordings();
-    window.addEventListener('online', () => setIsOnline(true));
-    window.addEventListener('offline', () => setIsOnline(false));
-  }, []);
+  window.addEventListener('start-video-status', statusListener as EventListener);
+
+  return () => {
+    window.removeEventListener('start-video-status', statusListener as EventListener);
+  };
+}, [currentImage, isPlaying, theme, isVideoStatusRecording]);
 
   useEffect(() => { checkIfLiked(); }, [currentTrackUrl, activeMode]);
 
   // --- Auto Slideshow ---
   useEffect(() => {
-      if (localImages.length <= 1 || isSlideshowPaused) return; // PAUSE CHECK
+      if (localImages.length <= 1 || isSlideshowPaused) return; 
 
       const interval = setInterval(() => {
           changeImage('next');
       }, 10000); 
 
       return () => clearInterval(interval);
-  }, [currentImageIndex, isSlideshowPaused]); // Re-run if paused state changes
+  }, [currentImageIndex, isSlideshowPaused]); 
 
   // --- Image Change Logic ---
   const changeImage = (direction: 'next' | 'prev') => {
       if (localImages.length === 0) return;
-      
       let newIndex = currentImageIndex;
       if (direction === 'next') {
           newIndex = (currentImageIndex + 1) % localImages.length;
       } else {
           newIndex = (currentImageIndex - 1 + localImages.length) % localImages.length;
       }
-
       setCurrentImageIndex(newIndex);
       setCurrentImage(localImages[newIndex]);
       setFadeKey(prev => prev + 1);
@@ -162,41 +174,26 @@ const AudioPlayer: React.FC = () => {
       if (!touchStartX.current) return;
       const touchEndX = e.changedTouches[0].clientX;
       const distance = touchStartX.current - touchEndX;
-      
-      if (distance > minSwipeDistance) {
-          changeImage('next');
-      } else if (distance < -minSwipeDistance) {
-          changeImage('prev');
-      }
+      if (distance > minSwipeDistance) changeImage('next');
+      else if (distance < -minSwipeDistance) changeImage('prev');
       touchStartX.current = 0;
   };
 
-  // --- Tap Handler (Single vs Double) ---
+  // --- Tap Handler ---
   const handleImageTap = (e: React.MouseEvent) => {
-      // Prevent click if user was swiping (basic check)
-      // Ideally logic handles this, but simple timestamp diff works
-      
       const now = Date.now();
       const DOUBLE_TAP_DELAY = 300;
-
       if (now - lastTapRef.current < DOUBLE_TAP_DELAY) {
-          // === DOUBLE TAP DETECTED ===
           if (singleTapTimeoutRef.current) clearTimeout(singleTapTimeoutRef.current);
-          
           const newPausedState = !isSlideshowPaused;
           setIsSlideshowPaused(newPausedState);
-          
-          // Show Visual Feedback (Ripple Icon)
           setSlideshowFeedback(newPausedState ? 'pause' : 'play');
-          setTimeout(() => setSlideshowFeedback(null), 800); // Hide after animation
-          
+          setTimeout(() => setSlideshowFeedback(null), 800); 
       } else {
-          // === SINGLE TAP (Wait to confirm) ===
           singleTapTimeoutRef.current = setTimeout(() => {
               changeImage('next');
           }, DOUBLE_TAP_DELAY);
       }
-      
       lastTapRef.current = now;
   };
 
@@ -305,9 +302,349 @@ const AudioPlayer: React.FC = () => {
           if(audioRef.current) { audioRef.current.crossOrigin = "anonymous"; setCurrentTrackUrl(url); }
           Toast.show({ text: 'Buffering failed. Recording disabled.', duration: 'long' });
       } finally { setIsLoading(false); }
-  };
+      };
+      
+      // --- Video Status Recording Logic (Multi-Mode) ---
+const startVideoStatusRecording = async (event?: CustomEvent<any>) => {
+  // Which visual mode did user choose from Header?
+  const mode: 'cinematic' | 'reactive' | 'minimal' | 'ultra' =
+    event?.detail?.mode || 'cinematic';
 
-  // --- Recording Logic ---
+  console.log('Status Recording Mode:', mode);
+
+  // Toggle: if already recording, stop it
+  if (isVideoStatusRecording) {
+    if (videoRecorderRef.current && videoRecorderRef.current.state !== 'inactive') {
+      videoRecorderRef.current.stop();
+    }
+    return;
+  }
+
+  if (!audioRef.current || !isPlaying) {
+    Toast.show({ text: 'Please play audio first!', duration: 'short' });
+    return;
+  }
+  if (isRecording) {
+    // Don’t allow status + audio-only recording simultaneously
+    return;
+  }
+
+  try {
+    setIsVideoStatusRecording(true);
+    Toast.show({ text: 'Recording Started (Tap Status to Stop)', duration: 'short' });
+
+    // 1) Canvas setup (Full HD vertical)
+    const canvas = document.createElement('canvas');
+    canvas.width = 1080;
+    canvas.height = 1920;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('No Canvas');
+
+    // 2) Theme-based accent color
+    const getThemeColor = () => {
+      switch (theme.id) {
+        case 'royal':
+          return '#fbbf24'; // amber
+        case 'bliss':
+          return '#f97316'; // orange
+        case 'harmandir':
+          return '#eab308'; // yellow
+        case 'midnight':
+          return '#818cf8'; // indigo
+        default:
+          return '#fbbf24';
+      }
+    };
+    const themeColor = getThemeColor();
+
+    // 3) Load current slideshow image
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.src = currentImage;
+    await new Promise((resolve, reject) => {
+      img.onload = resolve;
+      img.onerror = reject;
+    });
+
+    // 4) Capture canvas stream + audio
+    const streamTarget = canvas.captureStream(30);
+    // @ts-ignore
+    const audio = audioRef.current;
+    // @ts-ignore
+    const audioStream =
+      audio.captureStream?.() || audio.mozCaptureStream?.() || null;
+
+    if (audioStream && audioStream.getAudioTracks().length > 0) {
+      streamTarget.addTrack(audioStream.getAudioTracks()[0]);
+    } else {
+      console.warn('Audio capture not supported.');
+    }
+
+    const recorder = new MediaRecorder(streamTarget, {
+      mimeType: 'video/webm; codecs=vp9',
+      videoBitsPerSecond: 8_000_000,
+    });
+    videoRecorderRef.current = recorder;
+
+    const chunks: BlobPart[] = [];
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0) chunks.push(e.data);
+    };
+
+    recorder.onstop = () => {
+      setIsVideoStatusRecording(false);
+      videoRecorderRef.current = null;
+
+      if (chunks.length === 0) return;
+      const blob = new Blob(chunks, { type: 'video/webm' });
+      setPendingBlob(blob);
+
+      const timestamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+      setSaveName(`Darbar_Status_${timestamp}`);
+      setShowSavePrompt(true);
+    };
+
+    recorder.start();
+
+    // 5) Animation engine
+    const startTime = Date.now();
+    let parallaxOffset = 0;
+    const bars = 64; // for reactive mode
+
+    const drawFrame = () => {
+      if (videoRecorderRef.current?.state === 'inactive') return;
+
+      const now = Date.now();
+      const t = (now - startTime) / 1000;
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // ---------- MODE A: CINEMATIC SACRED FILM ----------
+      if (mode === 'cinematic') {
+        // Background gradient
+        const grd = ctx.createLinearGradient(0, 0, 0, canvas.height);
+        grd.addColorStop(0, 'rgba(255, 230, 150, 0.18)');
+        grd.addColorStop(1, 'rgba(0, 0, 0, 0.9)');
+        ctx.fillStyle = grd;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Ken Burns zoom + pan
+        const zoom = 1.08 + Math.sin(t * 0.15) * 0.03;
+        const panX = Math.sin(t * 0.12) * 35;
+        const panY = Math.cos(t * 0.10) * 45;
+
+        const scaledW = img.width * zoom;
+        const scaledH = img.height * zoom;
+        const x = canvas.width / 2 - scaledW / 2 + panX;
+        const y = canvas.height / 2 - scaledH / 2 - 140 + panY;
+
+        // Glow backdrop
+        ctx.globalAlpha = 0.25;
+        ctx.filter = 'blur(40px)';
+        ctx.drawImage(img, x, y, scaledW, scaledH);
+        ctx.filter = 'none';
+        ctx.globalAlpha = 1;
+
+        // Main sharp image
+        ctx.drawImage(img, x, y, scaledW, scaledH);
+
+        // Floating golden bokeh
+        for (let i = 0; i < 30; i++) {
+          const px = (i * 200 + t * 40) % (canvas.width + 200) - 100;
+          const py = (i * 120 + t * 25) % (canvas.height + 200) - 100;
+          const radius = 16 + Math.sin(t * 0.4 + i) * 6;
+          ctx.fillStyle = `rgba(255, 215, 120, ${0.05 + Math.sin(t + i) * 0.04})`;
+          ctx.beginPath();
+          ctx.arc(px, py, radius, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      // ---------- MODE B: AUDIO REACTIVE VISUALIZER ----------
+      else if (mode === 'reactive') {
+        // Dark background
+        ctx.fillStyle = '#020617';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Subtle image background
+        const zoom = 1.05;
+        const scaledW = img.width * zoom;
+        const scaledH = img.height * zoom;
+        const x = canvas.width / 2 - scaledW / 2;
+        const y = 260;
+
+        ctx.globalAlpha = 0.35;
+        ctx.filter = 'blur(30px)';
+        ctx.drawImage(img, x, y, scaledW, scaledH);
+        ctx.filter = 'none';
+        ctx.globalAlpha = 1;
+
+        ctx.drawImage(img, x, y, scaledW, scaledH);
+
+        // Fake audio bars (sin-based animation)
+        const barWidth = canvas.width / bars;
+        for (let i = 0; i < bars; i++) {
+          const phase = t * 3 + i * 0.4;
+          const h = 40 + (Math.sin(phase) + 1) * 55; // 40–150px
+          const bx = i * barWidth;
+          const by = canvas.height - h - 140;
+
+          const alpha = 0.4 + 0.4 * Math.sin(phase + 1);
+          ctx.fillStyle = `rgba(56, 189, 248, ${alpha})`; // cyan-ish
+          ctx.fillRect(bx + 2, by, barWidth - 4, h);
+
+          // Gradient glow on top
+          const grad = ctx.createLinearGradient(0, by, 0, by + h);
+          grad.addColorStop(0, 'rgba(248, 250, 252, 0.9)');
+          grad.addColorStop(1, 'rgba(56, 189, 248, 0)');
+          ctx.fillStyle = grad;
+          ctx.fillRect(bx + 2, by, barWidth - 4, h);
+        }
+      }
+
+      // ---------- MODE C: MINIMALIST CLASSIC ----------
+      else if (mode === 'minimal') {
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Center image, no crazy zoom
+        const scale = Math.min(
+          (canvas.width * 0.8) / img.width,
+          (canvas.height * 0.7) / img.height
+        );
+        const w = img.width * scale;
+        const h = img.height * scale;
+        const x = canvas.width / 2 - w / 2;
+        const y = canvas.height / 2 - h / 2 - 80;
+
+        ctx.drawImage(img, x, y, w, h);
+
+        // Very soft glow
+        ctx.globalAlpha = 0.2;
+        ctx.filter = 'blur(60px)';
+        ctx.drawImage(img, x, y, w, h);
+        ctx.filter = 'none';
+        ctx.globalAlpha = 1;
+
+        // Simple halo
+        const radial = ctx.createRadialGradient(
+          canvas.width / 2,
+          canvas.height / 2 - 80,
+          0,
+          canvas.width / 2,
+          canvas.height / 2 - 80,
+          canvas.width / 2
+        );
+        radial.addColorStop(0, 'rgba(250, 250, 250, 0.08)');
+        radial.addColorStop(1, 'rgba(0, 0, 0, 0.95)');
+        ctx.fillStyle = radial;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+
+      // ---------- MODE D: ULTRA CINEMATIC 3D ----------
+      else if (mode === 'ultra') {
+        ctx.fillStyle = '#020617';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Parallax offset
+        parallaxOffset = Math.sin(t * 0.3) * 30;
+
+        // Radiating light rays
+        ctx.save();
+        ctx.translate(canvas.width / 2, canvas.height / 2 - 120);
+        ctx.globalAlpha = 0.18;
+        ctx.fillStyle = themeColor;
+
+        for (let i = 0; i < 14; i++) {
+          const angle = (Math.PI * 2 * i) / 14 + t * 0.15;
+          const r = 1900;
+          ctx.beginPath();
+          ctx.moveTo(0, 0);
+          ctx.lineTo(Math.cos(angle) * r, Math.sin(angle) * r);
+          ctx.lineTo(Math.cos(angle + 0.08) * r, Math.sin(angle + 0.08) * r);
+          ctx.closePath();
+          ctx.fill();
+        }
+        ctx.restore();
+        ctx.globalAlpha = 1;
+
+        // Foreground image with small Z-movement
+        const zoom = 1.12 + Math.sin(t * 0.2) * 0.04;
+        const scaledW = img.width * zoom;
+        const scaledH = img.height * zoom;
+        const x = canvas.width / 2 - scaledW / 2 + parallaxOffset;
+        const y = canvas.height / 2 - scaledH / 2 - 120;
+
+        ctx.drawImage(img, x, y, scaledW, scaledH);
+
+        // Floating white/golden dust
+        for (let i = 0; i < 40; i++) {
+          const px = (i * 90 + t * 50) % canvas.width;
+          const py = (i * 120 + t * 35) % canvas.height;
+          const r = 6 + (Math.sin(t + i) + 1) * 3;
+          ctx.fillStyle = `rgba(255, 255, 255, ${0.1 + 0.1 * Math.sin(i + t)})`;
+          ctx.beginPath();
+          ctx.arc(px, py, r, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      // ---------- COMMON: Title + Progress Bar ----------
+      ctx.textAlign = 'center';
+
+      // Track title
+      ctx.font = 'bold 46px system-ui, -apple-system, BlinkMacSystemFont, sans-serif';
+      ctx.fillStyle = 'rgba(255,255,255,0.95)';
+      const title =
+        activeMode === 'live'
+          ? 'Sri Harmandir Sahib • Live Kirtan'
+          : currentTrackTitle || 'Darbar Sahib Kirtan';
+      ctx.fillText(title, canvas.width / 2, canvas.height - 210);
+
+      // Time / progress
+      const current = audio.currentTime;
+      const total = audio.duration || 1;
+
+      ctx.lineWidth = 0;
+      const barX = 160;
+      const barY = canvas.height - 170;
+      const barW = canvas.width - 320;
+      const barH = 16;
+
+      // Track background
+      ctx.fillStyle = 'rgba(255,255,255,0.25)';
+      ctx.fillRect(barX, barY, barW, barH);
+
+      // Progress
+      ctx.fillStyle = themeColor;
+      ctx.fillRect(barX, barY, barW * (current / total), barH);
+
+      // Time text
+      const format = (s: number) => {
+        if (!Number.isFinite(s)) return '00:00';
+        const m = Math.floor(s / 60);
+        const sec = Math.floor(s % 60)
+          .toString()
+          .padStart(2, '0');
+        return `${m}:${sec}`;
+      };
+      ctx.font = '28px monospace';
+      ctx.fillStyle = 'rgba(255,255,255,0.8)';
+      ctx.fillText(`${format(current)} / ${format(total)}`, canvas.width / 2, canvas.height - 125);
+
+      requestAnimationFrame(drawFrame);
+    };
+
+    drawFrame();
+  } catch (e) {
+    console.error('Video Record Error:', e);
+    Toast.show({ text: 'Failed to start video recording', duration: 'long' });
+    setIsVideoStatusRecording(false);
+  }
+};
+
+      
+      // --- Recording Logic (Audio Only) ---
   const toggleRecording = async () => {
     if (isRecording) { if (mediaRecorderRef.current) mediaRecorderRef.current.stop(); } 
     else {
@@ -340,7 +677,10 @@ const AudioPlayer: React.FC = () => {
   const handleConfirmSave = async () => {
       if (!pendingBlob || !saveName.trim()) return;
       let fileName = saveName.trim();
-      if (!fileName.toLowerCase().endsWith('.webm')) fileName += '.webm';
+      const isVideo = pendingBlob.type.includes('video');
+      const ext = isVideo ? '.webm' : '.webm'; 
+      if (!fileName.toLowerCase().endsWith(ext)) fileName += ext;
+      
       try {
           const reader = new FileReader();
           reader.onloadend = async () => {
@@ -401,6 +741,18 @@ const AudioPlayer: React.FC = () => {
                 </div>
             </div>
         </div>
+      )}
+
+
+      {/* Video Status Recording Overlay */}
+      {isVideoStatusRecording && (
+          <div 
+            onClick={startVideoStatusRecording} // Allow tapping overlay to stop
+            className="absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-red-500 text-white px-4 py-1 rounded-full text-xs font-bold animate-pulse flex items-center gap-2 shadow-lg cursor-pointer hover:scale-105 transition-transform"
+          >
+              <div className="w-2 h-2 bg-white rounded-full" />
+              Rec Status (Tap to Stop)
+          </div>
       )}
 
       {showFavorites && <FavoritesList onClose={() => setShowFavorites(false)} onPlay={playFavorite} />}
