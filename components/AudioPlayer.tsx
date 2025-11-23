@@ -71,7 +71,7 @@ const AudioPlayer: React.FC = () => {
   
   const playLive = async () => {
     if(activeMode !== 'live') {
-        setCurrentTrackUrl(null); // Clear file url
+        setCurrentTrackUrl(null); 
     }
     setActiveMode('live');
     const audio = audioRef.current;
@@ -144,33 +144,75 @@ const AudioPlayer: React.FC = () => {
   // --- Recording Logic ---
   const toggleRecording = async () => {
     if (isRecording) {
+        // STOP Recording
         if (mediaRecorderRef.current) mediaRecorderRef.current.stop();
     } else {
-        if (activeMode !== 'live' && !isPlaying) { alert("Play audio first"); return; }
+        // START Recording
+        if (!isPlaying) { 
+            alert("Please play the audio first."); 
+            return; 
+        }
+
         const audio = audioRef.current;
+        if (!audio) return;
+
+        // Try to capture stream
         // @ts-ignore
         const stream = audio.captureStream ? audio.captureStream() : audio.mozCaptureStream ? audio.mozCaptureStream() : null;
-        if (!stream) return;
+        
+        if (!stream) { 
+            alert("Recording Failed: Audio stream could not be captured. This may be due to security restrictions on the stream source."); 
+            return; 
+        }
 
-        const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
-        mediaRecorderRef.current = mediaRecorder;
-        chunksRef.current = [];
-        mediaRecorder.ondataavailable = (e) => { if(e.data.size>0) chunksRef.current.push(e.data); };
-        mediaRecorder.onstop = async () => {
-            const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
-            const fileName = `Darbar_Rec_${new Date().toISOString().slice(0,19).replace(/[:.]/g,'-')}.webm`;
-            const reader = new FileReader();
-            reader.onloadend = async () => {
-                await Filesystem.writeFile({ path: fileName, data: (reader.result as string).split(',')[1], directory: Directory.Documents });
-                await Toast.show({ text: 'Saved!', duration: 'short' });
-                loadLocalRecordings();
+        try {
+            const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+            mediaRecorderRef.current = mediaRecorder;
+            chunksRef.current = [];
+            
+            mediaRecorder.ondataavailable = (e) => { 
+                if(e.data.size > 0) chunksRef.current.push(e.data); 
             };
-            reader.readAsDataURL(blob);
-            setIsRecording(false);
-            setRecordingDuration(0);
-        };
-        mediaRecorder.start(1000);
-        setIsRecording(true);
+            
+            mediaRecorder.onstop = async () => {
+                if(chunksRef.current.length === 0) {
+                    alert("Recording Failed: No data captured.");
+                    setIsRecording(false);
+                    return;
+                }
+
+                const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
+                const fileName = `Darbar_Rec_${new Date().toISOString().slice(0,19).replace(/[:.]/g,'-')}.webm`;
+                
+                try {
+                    const reader = new FileReader();
+                    reader.onloadend = async () => {
+                        const base64 = (reader.result as string).split(',')[1];
+                        await Filesystem.writeFile({ 
+                            path: fileName, 
+                            data: base64, 
+                            directory: Directory.Documents 
+                        });
+                        await Toast.show({ text: 'Recording Saved!', duration: 'short' });
+                        loadLocalRecordings();
+                    };
+                    reader.readAsDataURL(blob);
+                } catch(e) {
+                    console.error(e);
+                    alert("Failed to save file.");
+                }
+                
+                setIsRecording(false);
+                setRecordingDuration(0);
+            };
+
+            mediaRecorder.start(1000);
+            setIsRecording(true);
+
+        } catch (err) {
+            console.error("MediaRecorder Error:", err);
+            alert("Recording Error: " + (err instanceof Error ? err.message : String(err)));
+        }
     }
   };
   
@@ -320,7 +362,6 @@ const AudioPlayer: React.FC = () => {
                             : 'cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-amber-400'
                         }`}
                 />
-                {/* Red Progress for Live, Amber for others */}
                 <div 
                     className={`absolute left-0 h-1.5 rounded-full pointer-events-none transition-all duration-500
                         ${activeMode === 'live' ? 'bg-red-500 w-full shadow-[0_0_10px_rgba(239,68,68,0.5)]' : 'bg-amber-500 rounded-l-full'}
@@ -371,8 +412,10 @@ const AudioPlayer: React.FC = () => {
 
       </div>
       
+      {/* KEY FIX: Conditional CORS based on Active Mode */}
       <audio 
         ref={audioRef} 
+        crossOrigin={activeMode === 'live' ? "anonymous" : undefined}
         playsInline 
         onError={(e) => {
             console.error("Audio Error:", e.currentTarget.error);
