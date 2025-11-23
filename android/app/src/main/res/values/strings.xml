@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">darbar-sahib-live</string>
-    <string name="title_activity_main">darbar-sahib-live</string>
-    <string name="package_name">com.example.app</string>
-    <string name="custom_url_scheme">com.example.app</string>
+    <string name="app_name">Darbar Sahib Live</string>
+    <string name="title_activity_main">Darbar Sahib Live</string>
+    <string name="package_name">com.ramanjitsingh.darbarlive</string>
+    <string name="custom_url_scheme">com.ramanjitsingh.darbarlive</string>
 </resources>
