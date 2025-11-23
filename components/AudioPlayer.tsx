@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { 
   Play, Pause, Radio, Loader2, Moon, Mic, Square, 
   ListMusic, SkipBack, SkipForward, Repeat, 
-  Repeat1, WifiOff, Globe, Search
+  Repeat1, WifiOff, Globe, Search, Download
 } from 'lucide-react';
 import { STREAM_URL } from '../constants';
 import { ConnectionStatus } from '../types';
@@ -44,8 +44,8 @@ const AudioPlayer: React.FC = () => {
   const [loopMode, setLoopMode] = useState<LoopMode>('off');
   const [isDragging, setIsDragging] = useState(false);
 
-  // --- Recording State ---
-  const [isRecording, setIsRecording] = useState(false);
+  // --- Recording/Download State ---
+  const [isRecording, setIsRecording] = useState(false); // Used for Live Rec AND Download Spinner
   const [recordingDuration, setRecordingDuration] = useState(0);
   
   // --- UI Overlays ---
@@ -115,7 +115,6 @@ const AudioPlayer: React.FC = () => {
 
   const handleNext = () => {
       if (activeMode === 'live') return;
-      
       let nextIdx = currentIndex + 1;
       if (activeMode === 'local') {
           if (nextIdx >= localRecordings.length) nextIdx = 0;
@@ -129,7 +128,6 @@ const AudioPlayer: React.FC = () => {
 
   const handlePrev = () => {
       if (activeMode === 'live') return;
-      
       let prevIdx = currentIndex - 1;
       if (activeMode === 'local') {
           if (prevIdx < 0) prevIdx = localRecordings.length - 1;
@@ -141,86 +139,83 @@ const AudioPlayer: React.FC = () => {
       }
   };
 
-  // --- Recording Logic ---
-  const toggleRecording = async () => {
-    if (isRecording) {
-        // STOP Recording
-        if (mediaRecorderRef.current) mediaRecorderRef.current.stop();
-    } else {
-        // START Recording
-        if (!isPlaying) { 
-            alert("Please play the audio first."); 
-            return; 
-        }
+  // --- Recording / Download Logic ---
+  const handleActionBtn = async () => {
+      if (activeMode === 'local') return; // Should be disabled anyway
 
-        const audio = audioRef.current;
-        if (!audio) return;
+      if (activeMode === 'remote') {
+          // --- DOWNLOAD MODE ---
+          if (!currentTrackUrl || isRecording) return;
+          
+          setIsRecording(true); // Show spinner
+          Toast.show({ text: 'Downloading track...', duration: 'short' });
+          
+          try {
+              // Sanitize filename
+              const safeName = currentTrackTitle.replace(/[^a-z0-9\s-]/gi, '').trim() + ".mp3";
+              
+              await Filesystem.downloadFile({
+                  path: safeName,
+                  directory: Directory.Documents,
+                  url: currentTrackUrl
+              });
+              
+              await Toast.show({ text: 'Saved to Recordings!', duration: 'long' });
+              loadLocalRecordings();
+          } catch (err) {
+              console.error(err);
+              alert("Download failed. Check internet connection.");
+          } finally {
+              setIsRecording(false);
+          }
+          return;
+      }
 
-        // Try to capture stream
-        // @ts-ignore
-        const stream = audio.captureStream ? audio.captureStream() : audio.mozCaptureStream ? audio.mozCaptureStream() : null;
-        
-        if (!stream) { 
-            alert("Recording Failed: Audio stream could not be captured. This may be due to security restrictions on the stream source."); 
-            return; 
-        }
+      // --- LIVE RECORD MODE ---
+      if (isRecording) {
+          // STOP
+          if (mediaRecorderRef.current) mediaRecorderRef.current.stop();
+      } else {
+          // START
+          if (!isPlaying) { alert("Play audio first"); return; }
+          const audio = audioRef.current;
+          // @ts-ignore
+          const stream = audio.captureStream ? audio.captureStream() : audio.mozCaptureStream ? audio.mozCaptureStream() : null;
+          
+          if (!stream) { 
+              alert("Recording Error: Stream not accessible."); 
+              return; 
+          }
 
-        try {
-            const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
-            mediaRecorderRef.current = mediaRecorder;
-            chunksRef.current = [];
-            
-            mediaRecorder.ondataavailable = (e) => { 
-                if(e.data.size > 0) chunksRef.current.push(e.data); 
-            };
-            
-            mediaRecorder.onstop = async () => {
-                if(chunksRef.current.length === 0) {
-                    alert("Recording Failed: No data captured.");
-                    setIsRecording(false);
-                    return;
-                }
-
-                const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
-                const fileName = `Darbar_Rec_${new Date().toISOString().slice(0,19).replace(/[:.]/g,'-')}.webm`;
-                
-                try {
-                    const reader = new FileReader();
-                    reader.onloadend = async () => {
-                        const base64 = (reader.result as string).split(',')[1];
-                        await Filesystem.writeFile({ 
-                            path: fileName, 
-                            data: base64, 
-                            directory: Directory.Documents 
-                        });
-                        await Toast.show({ text: 'Recording Saved!', duration: 'short' });
-                        loadLocalRecordings();
-                    };
-                    reader.readAsDataURL(blob);
-                } catch(e) {
-                    console.error(e);
-                    alert("Failed to save file.");
-                }
-                
-                setIsRecording(false);
-                setRecordingDuration(0);
-            };
-
-            mediaRecorder.start(1000);
-            setIsRecording(true);
-
-        } catch (err) {
-            console.error("MediaRecorder Error:", err);
-            alert("Recording Error: " + (err instanceof Error ? err.message : String(err)));
-        }
-    }
+          const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+          mediaRecorderRef.current = mediaRecorder;
+          chunksRef.current = [];
+          mediaRecorder.ondataavailable = (e) => { if(e.data.size>0) chunksRef.current.push(e.data); };
+          mediaRecorder.onstop = async () => {
+              if(chunksRef.current.length === 0) { setIsRecording(false); return; }
+              const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
+              const fileName = `Darbar_Rec_${new Date().toISOString().slice(0,19).replace(/[:.]/g,'-')}.webm`;
+              
+              const reader = new FileReader();
+              reader.onloadend = async () => {
+                  await Filesystem.writeFile({ path: fileName, data: (reader.result as string).split(',')[1], directory: Directory.Documents });
+                  Toast.show({ text: 'Recording Saved!', duration: 'short' });
+                  loadLocalRecordings();
+              };
+              reader.readAsDataURL(blob);
+              setIsRecording(false);
+              setRecordingDuration(0);
+          };
+          mediaRecorder.start(1000);
+          setIsRecording(true);
+      }
   };
   
   useEffect(() => {
     let interval: any;
-    if(isRecording) interval = setInterval(() => setRecordingDuration(s => s+1), 1000);
+    if(isRecording && activeMode === 'live') interval = setInterval(() => setRecordingDuration(s => s+1), 1000);
     return () => clearInterval(interval);
-  }, [isRecording]);
+  }, [isRecording, activeMode]);
 
   // Audio Events
   useEffect(() => {
@@ -308,8 +303,16 @@ const AudioPlayer: React.FC = () => {
                 <span className="uppercase">{activeMode}</span>
             </div>
 
-            <div className="flex gap-2">
-                {isRecording && <span className="text-red-400 text-xs font-mono animate-pulse">REC {formatTime(recordingDuration)}</span>}
+            <div className="flex items-center gap-2">
+                {isRecording && activeMode === 'live' && <span className="text-red-400 text-xs font-mono animate-pulse">REC {formatTime(recordingDuration)}</span>}
+                
+                {/* "Back to Live" Button (Only visible if NOT Live) */}
+                {activeMode !== 'live' && (
+                    <button onClick={playLive} className="p-2 hover:bg-green-500/10 rounded-full text-slate-400 hover:text-green-400 transition-colors" title="Back to Live">
+                        <Globe className="w-5 h-5" />
+                    </button>
+                )}
+
                 <button onClick={() => setShowExplorer(true)} className="p-2 hover:bg-slate-800 rounded-full">
                     <Search className="w-5 h-5 text-slate-400" />
                 </button>
@@ -358,7 +361,7 @@ const AudioPlayer: React.FC = () => {
                     onTouchStart={() => setIsDragging(true)} onTouchEnd={() => setIsDragging(false)}
                     className={`w-full h-1.5 bg-slate-800 rounded-full appearance-none 
                         ${activeMode === 'live' 
-                            ? 'cursor-not-allowed [&::-webkit-slider-thumb]:hidden' // Hide Thumb
+                            ? 'cursor-not-allowed [&::-webkit-slider-thumb]:hidden' 
                             : 'cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-amber-400'
                         }`}
                 />
@@ -397,22 +400,27 @@ const AudioPlayer: React.FC = () => {
                 <button onClick={handleNext} className="p-2 text-slate-300"><SkipForward className="w-8 h-8 fill-current" /></button>
             )}
 
-            {activeMode === 'live' ? (
-                <button onClick={toggleRecording} className={`flex flex-col items-center gap-1 ${isRecording?'text-red-400':'text-slate-500'}`}>
-                    {isRecording ? <Square className="w-5 h-5 fill-current"/> : <Mic className="w-5 h-5"/>}
-                    <span className="text-[10px]">{isRecording?'Stop':'Rec'}</span>
+            {/* RIGHT ACTION BUTTON (Variable) */}
+            {activeMode === 'local' ? (
+                // Placeholder to keep layout balanced or disable
+                <div className="w-8" /> 
+            ) : activeMode === 'remote' ? (
+                // DOWNLOAD BUTTON
+                <button onClick={handleActionBtn} disabled={isRecording} className={`flex flex-col items-center gap-1 ${isRecording?'text-green-400':'text-slate-500 hover:text-green-400'}`}>
+                    {isRecording ? <Loader2 className="w-5 h-5 animate-spin"/> : <Download className="w-5 h-5"/>}
+                    <span className="text-[10px]">{isRecording ? 'Saving' : 'Save'}</span>
                 </button>
             ) : (
-                <button onClick={playLive} className="text-slate-500 hover:text-green-400 flex flex-col items-center gap-1">
-                    <Globe className="w-5 h-5" />
-                    <span className="text-[10px]">Live</span>
+                // RECORD BUTTON (Live)
+                <button onClick={handleActionBtn} className={`flex flex-col items-center gap-1 ${isRecording?'text-red-400':'text-slate-500'}`}>
+                    {isRecording ? <Square className="w-5 h-5 fill-current"/> : <Mic className="w-5 h-5"/>}
+                    <span className="text-[10px]">{isRecording?'Stop':'Rec'}</span>
                 </button>
             )}
         </div>
 
       </div>
       
-      {/* KEY FIX: Conditional CORS based on Active Mode */}
       <audio 
         ref={audioRef} 
         crossOrigin={activeMode === 'live' ? "anonymous" : undefined}
