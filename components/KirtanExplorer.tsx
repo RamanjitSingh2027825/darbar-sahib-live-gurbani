@@ -3,6 +3,7 @@ import {
   Folder, Music, ArrowLeft, Loader2, X,
   Calendar, User, Play, Search
 } from 'lucide-react';
+import { Virtuoso } from 'react-virtuoso';
 import { fetchDirectory, KIRTAN_BASE, RAGIWISE_BASE, CLASSIFICATION_BASE, DirectoryEntry } from '../services/sgpcService';
 import { useTheme } from '../contexts/ThemeContext'; // IMPORT THEME
 
@@ -71,10 +72,10 @@ const KirtanExplorer: React.FC<KirtanExplorerProps> = ({ onClose, onPlayTrack })
   });
 
   return (
-    <div className={`absolute inset-0 z-50 flex flex-col animate-in slide-in-from-bottom-4 duration-300 ${theme.colors.appBg}`}>
+    <div className={`absolute inset-0 z-50 flex flex-col animate-in slide-in-from-bottom-4 duration-300 ${theme.colors.appBg} pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]`}>
 
       {/* Header */}
-      <div className={`p-4 border-b flex items-center justify-between ${theme.colors.cardBg} ${theme.colors.cardBorder}`}>
+      <div className={`p-4 pt-6 border-b flex items-center justify-between ${theme.colors.cardBg} ${theme.colors.cardBorder}`}>
         <h2 className={`text-lg font-bold flex items-center gap-2 ${theme.colors.textMain}`}>
           <Music className={`w-5 h-5 ${theme.colors.accent}`} />
           Past Kirtan
@@ -140,39 +141,46 @@ const KirtanExplorer: React.FC<KirtanExplorerProps> = ({ onClose, onPlayTrack })
       )}
 
       {/* List */}
-      <div className="flex-1 overflow-y-auto p-2">
+      <div className="flex-1 overflow-hidden p-2">
         {loading ? (
           <div className={`flex flex-col items-center justify-center h-48 gap-3 ${theme.colors.textSub}`}>
             <Loader2 className={`w-8 h-8 animate-spin ${theme.colors.accent}`} />
             <p className="text-xs">Fetching...</p>
           </div>
         ) : (
-          <div className="space-y-1">
-            {filteredEntries.map((entry, idx) => (
-              <button
-                key={idx + entry.name}
-                onClick={() => handleEntryClick(entry)}
-                className={`w-full flex items-center gap-3 p-3 rounded-xl border border-transparent transition-all group text-left ${theme.colors.hover}`}
-              >
-                <div className={`p-2 rounded-full ${entry.is_file ? `${theme.colors.iconBg} ${theme.colors.textMain}` : `${theme.colors.accent} bg-opacity-10`}`}>
-                  {entry.is_file ? <Play className="w-4 h-4 fill-current" /> : <Folder className="w-4 h-4 fill-current" />}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className={`text-sm font-medium truncate transition-colors ${theme.colors.textMain} group-hover:${theme.colors.accent}`}>
-                    {decodeURIComponent(entry.name).replace('.mp3', '')}
-                  </p>
-                  <p className={`text-[10px] ${theme.colors.textSub}`}>
-                    {entry.is_file ? 'Audio File' : 'Folder'}
-                  </p>
-                </div>
-              </button>
-            ))}
-            {filteredEntries.length === 0 && !loading && (
-              <div className={`text-center p-8 text-sm ${theme.colors.textSub}`}>
-                {searchQuery ? "No results found" : "Empty Directory"}
-              </div>
-            )}
-          </div>
+          filteredEntries.length === 0 ? (
+            <div className={`text-center p-8 text-sm ${theme.colors.textSub}`}>
+              {searchQuery ? "No results found" : "Empty Directory"}
+            </div>
+          ) : (
+            <Virtuoso
+              style={{ height: '100%', width: '100%' }}
+              totalCount={filteredEntries.length}
+              itemContent={(index) => {
+                const entry = filteredEntries[index];
+                return (
+                  <div className="px-1 py-1">
+                    <button
+                      onClick={() => handleEntryClick(entry)}
+                      className={`w-full flex items-center gap-3 p-3 rounded-xl border border-transparent transition-all group text-left ${theme.colors.hover}`}
+                    >
+                      <div className={`p-2 rounded-full ${entry.is_file ? `${theme.colors.iconBg} ${theme.colors.textMain}` : `${theme.colors.accent} bg-opacity-10`}`}>
+                        {entry.is_file ? <Play className="w-4 h-4 fill-current" /> : <Folder className="w-4 h-4 fill-current" />}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-sm font-medium truncate transition-colors ${theme.colors.textMain} group-hover:${theme.colors.accent}`}>
+                          {decodeURIComponent(entry.name).replace('.mp3', '')}
+                        </p>
+                        <p className={`text-[10px] ${theme.colors.textSub}`}>
+                          {entry.is_file ? 'Audio File' : 'Folder'}
+                        </p>
+                      </div>
+                    </button>
+                  </div>
+                );
+              }}
+            />
+          )
         )}
       </div>
     </div>

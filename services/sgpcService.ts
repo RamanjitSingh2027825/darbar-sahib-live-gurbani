@@ -183,7 +183,11 @@ const fetchClassifications = (url: string): DirectoryEntry[] => {
   // 1. ROOT: List Duty Types
   if (url === prefix || url === prefix.replace(/\/$/, '')) {
     const duties = new Set(data.map(d => d.Duty_Type).filter(Boolean));
-    return Array.from(duties).sort().map(duty => ({
+    const dutyList = Array.from(duties).sort();
+    // Add "All Kirtan Hazris" at the top or sorted
+    dutyList.unshift("All Kirtan Hazris");
+
+    return dutyList.map(duty => ({
       name: duty,
       url: `${prefix}${encodeURIComponent(duty)}`,
       is_file: false,
@@ -197,8 +201,18 @@ const fetchClassifications = (url: string): DirectoryEntry[] => {
 
     const dutyType = parts[0];
 
-    // 2. DUTY TYPE SELECTED: List Ragis
+    // 2. DUTY TYPE SELECTED
     if (parts.length === 1) {
+      // Special Case: All Kirtan Hazris -> Return ALL tracks
+      if (dutyType === "All Kirtan Hazris") {
+        return data.map(d => ({
+          name: d.name,
+          url: d.url,
+          is_file: true,
+          is_mp3: true
+        }));
+      }
+
       const filteredByDuty = data.filter(d => d.Duty_Type === dutyType);
       // Get unique Ragis for this duty
       const ragis = new Set(filteredByDuty.map(d => d.ragi).filter(Boolean));
